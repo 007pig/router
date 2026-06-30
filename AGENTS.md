@@ -77,17 +77,26 @@ ISP cable network
 Important established findings:
 
 - OPNsense WAN IPv6 works.
-- Native OPNsense LAN IPv6 through the Connect Box is not currently usable.
+- Native routed OPNsense LAN IPv6 through the Connect Box is not currently
+  usable.
+- As of 2026-07-01, general LAN IPv6 egress is implemented as ULA-only LAN
+  `fde1:c8ad:df47:4fa0::/64` plus WAN NAT66 to the OPNsense WAN IPv6 address.
 - The Connect Box is in DS-Lite router mode and does not expose a downstream
   IPv6 routed-prefix/static-route/DHCPv6-PD configuration page.
 - OPNsense has an intentional rule named
   `Reject non-WARP LAN IPv6 internet (upstream PD not routed)`.
-- WARP is the practical IPv6 egress path for selected LAN clients unless the
-  upstream routed-prefix issue is fixed.
-- There have been stale `2a02:8084:2001:6620::*` IPv6 references in OPNsense
-  aliases/DHCPv6 settings. Check the IPv6 document before relying on them.
+- WARP remains the preferred IPv6 egress path for selected `warp_hosts`; its
+  policy rules are intentionally ordered before the general LAN NAT66 rule.
+- Stale `2a02:8084:2001:6620::*` IPv6 references were removed from DHCPv6 DNS,
+  DHCPv6 static maps, and `warp_hosts`, but `2a02:8084:2001:6620::/64` remains
+  in `Local_Networks` until dependencies are verified.
+- `NAT66_LAN_V6` contains ULA `fde1:c8ad:df47:4fa0::/64` plus transitional
+  `2a02:8084:2001:6610::/64`.
 - The modem watchdog is intentionally tied to `WAN_DHCP` and ignores
   `WAN_DHCP6`.
+- Manage Router Advertisements with OPNsense plugin commands such as
+  `/usr/local/sbin/pluginctl -c radvd`; do not use `service radvd restart`,
+  which can start the package example config instead of `/var/etc/radvd.conf`.
 
 ## Diagnostic Preference
 
@@ -112,6 +121,7 @@ cat /var/etc/radvd.conf
 cat /var/dhcpd/etc/dhcpdv6.conf
 pfctl -sr
 pfctl -sn
+pfctl -t NAT66_LAN_V6 -T show
 pfctl -t Local_Networks -T show
 pfctl -t warp_hosts -T show
 ```
@@ -128,4 +138,3 @@ When new findings are made:
 - Link related documents to each other instead of duplicating long sections.
 - Record dates for observations that may change, especially leases, prefixes,
   firmware versions, and gateway state.
-

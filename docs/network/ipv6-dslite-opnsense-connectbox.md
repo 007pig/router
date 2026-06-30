@@ -1,18 +1,20 @@
 # OPNsense IPv6 over DS-Lite with Connect Box
 
 Date: 2026-06-30
+Last updated: 2026-07-01
 
 This document records the IPv6 investigation for the OPNsense router behind a
 Virgin/UPC-style Connect Box cable modem using DS-Lite. It summarizes the
-observed state, the tests performed, the likely root cause, and the practical
-operating options.
+observed state, the tests performed, the likely root cause, and the current
+NAT66 operating model.
 
-No modem or OPNsense configuration was changed during this investigation.
+The original 2026-06-30 investigation was read-only. Later sections record the
+OPNsense NAT66 changes that were applied after that diagnosis.
 
 ## Summary
 
 OPNsense itself has working IPv6 on its WAN side, but LAN clients do not have
-working native IPv6 through the Connect Box.
+working native routed IPv6 through the Connect Box.
 
 The strongest evidence is:
 
@@ -29,11 +31,334 @@ The strongest evidence is:
   non-WARP LAN IPv6 internet access before it can time out.
 
 The practical conclusion is that native routed LAN IPv6 through this Connect
-Box router mode is not currently usable for OPNsense downstream clients. WARP
-remains a stable IPv6 egress option for selected clients. A later single-client
-NAT66/ULA test also proved that outbound client access to IPv6-only sites can be
-restored by translating selected LAN IPv6 sources to the working OPNsense WAN
-IPv6 address.
+Box router mode is not currently usable for OPNsense downstream clients.
+
+Current operating model as of 2026-07-01:
+
+- OPNsense LAN IPv6 uses ULA prefix `fde1:c8ad:df47:4fa0::/64`.
+- LAN clients can access IPv6-only sites through WAN NAT66.
+- NAT66 translates LAN ULA sources to the working OPNsense WAN IPv6 address
+  `2a02:8084:2001:6600:2f0:cbff:feef:e549`.
+- WARP policy-routing rules for `warp_hosts` remain before the general LAN
+  NAT66 rule, so selected WARP devices still have priority.
+- This restores outbound IPv6 usability, but not end-to-end native IPv6 or
+  inbound IPv6 reachability.
+
+## Current State: Full LAN ULA-only + NAT66
+
+Date applied: 2026-07-01 local session time. OPNsense backup timestamps are in
+the router's clock/timezone and were created as `20260630-*`.
+
+Config backups created during implementation:
+
+```text
+/conf/config.xml.codex-lan-ula-nat66-20260630-232903
+/conf/config.xml.codex-lan-ula-nat66-20260630-233248
+```
+
+The second backup was taken immediately before the corrected DHCPv6 static/range
+format was written.
+
+Applied OPNsense changes:
+
+- LAN main IPv6 changed from tracked/idassoc6 to static
+  `fde1:c8ad:df47:4fa0::1/64`.
+- LAN `track6-interface`, `track6-prefix-id`, and `track6_ifid` were removed.
+- The previous LAN ULA Virtual IP `fde1:c8ad:df47:4fa0::1/64` was removed
+  because that address is now the LAN primary IPv6 address.
+- RA mode was set to `assist` with `DeprecatePrefix off`.
+- RA RDNSS was set to `fde1:c8ad:df47:4fa0::1`.
+- DHCPv6 range was changed to:
+
+  ```text
+  fde1:c8ad:df47:4fa0::1000 - fde1:c8ad:df47:4fa0::1fff
+  ```
+
+- DHCPv6 DNS was changed to `fde1:c8ad:df47:4fa0::1`.
+- DHCPv6 static maps were migrated to ULA:
+
+  ```text
+  Xiaoyus-MBP -> fde1:c8ad:df47:4fa0::1e35
+  previous 2a02:8084:2001:6620::1d7d -> fde1:c8ad:df47:4fa0::1d7d
+  ```
+
+- Alias `NAT66_TEST_CLIENT_V6` was removed.
+- Alias `NAT66_LAN_V6` was added:
+
+  ```text
+  fde1:c8ad:df47:4fa0::/64
+  2a02:8084:2001:6610::/64
+  ```
+
+  The `6610::/64` entry is transitional while clients age out old addresses.
+  The current Mac had already moved to ULA by the end of verification.
+
+- `Local_Networks` now includes:
+
+  ```text
+  fde1:c8ad:df47:4fa0::/64
+  2a02:8084:2001:6610::/64
+  2a02:8084:2001:6620::/64
+  ```
+
+  The old `6620::/64` entry was intentionally left in place during this change
+  to avoid mixing cleanup with the migration.
+
+- The single-client LAN rule `TEST allow NAT66 client IPv6 to WAN` was replaced
+  by:
+
+  ```text
+  Allow LAN IPv6 via WAN NAT66
+  ```
+
+- The single-client WAN outbound NAT66 rule was replaced by:
+
+  ```text
+  NAT66 LAN IPv6 to WAN address
+  ```
+
+Post-apply LAN interface state:
+
+```text
+igc1:
+  inet 192.168.1.1/24
+  inet6 fe80::2f0:cbff:feef:e54a%igc1
+  inet6 fde1:c8ad:df47:4fa0::1/64
+```
+
+Post-apply IPv6 route table includes:
+
+```text
+default -> fe80::b6f2:67ff:fe1a:5545%igc0
+fde1:c8ad:df47:4fa0::/64 -> igc1
+```
+
+The router still has an old delegated-prefix route:
+
+```text
+2a02:8084:2001:6610::/60 -> lo0
+```
+
+Do not treat that as usable native LAN IPv6. The active LAN prefix is ULA.
+
+Generated RA config:
+
+```text
+interface igc1 {
+    AdvSendAdvert on;
+    MinRtrAdvInterval 200;
+    MaxRtrAdvInterval 600;
+    AdvLinkMTU 1500;
+    AdvCurHopLimit 64;
+    AdvDefaultPreference medium;
+    AdvManagedFlag on;
+    AdvOtherConfigFlag on;
+    RemoveAdvOnExit on;
+    prefix fde1:c8ad:df47:4fa0::/64 {
+        DeprecatePrefix off;
+        AdvOnLink on;
+        AdvAutonomous on;
+    };
+    RDNSS fde1:c8ad:df47:4fa0::1 {
+    };
+    DNSSL localdomain {
+    };
+};
+```
+
+Generated DHCPv6 config:
+
+```text
+subnet6 fde1:c8ad:df47:4fa0::/64 {
+  range6 fde1:c8ad:df47:4fa0::1000 fde1:c8ad:df47:4fa0::1fff;
+  option dhcp6.name-servers fde1:c8ad:df47:4fa0::1;
+}
+
+host s_lan_0 {
+  fixed-address6 fde1:c8ad:df47:4fa0::1e35;
+  option host-name "Xiaoyus-MBP";
+}
+
+host s_lan_1 {
+  fixed-address6 fde1:c8ad:df47:4fa0::1d7d;
+}
+```
+
+Loaded NAT rules include:
+
+```text
+nat on wg1 inet6 from <warp_hosts> to any -> (wg1:0) port 1024:65535
+nat on igc0 inet6 from <NAT66_LAN_V6> to any -> (igc0:0) port 1024:65535
+```
+
+Loaded LAN IPv6 rule order:
+
+```text
+pass in quick on igc1 route-to (wg1 2606:4700:110:8e08:fe8:72eb:5c58:1337) inet6 from <warp_hosts> to ! <warp_disabled>
+pass in quick on igc1 route-to (wg1 2606:4700:110:8e08:fe8:72eb:5c58:1337) inet6 proto udp from <warp_hosts> to ! <warp_disabled> port = http
+pass in quick on igc1 route-to (wg1 2606:4700:110:8e08:fe8:72eb:5c58:1337) inet6 proto udp from <warp_hosts> to ! <warp_disabled> port = https
+pass in quick on igc1 inet6 from <NAT66_LAN_V6> to ! <Local_Networks>
+block return in log quick on igc1 inet6 from (igc1:network) to ! <Local_Networks>
+block return in log quick on igc1 inet6 from fe80::/10 to ! <Local_Networks>
+```
+
+This confirms WARP IPv6 policy rules still run before general LAN NAT66.
+
+Loaded aliases:
+
+```text
+NAT66_LAN_V6:
+  2a02:8084:2001:6610::/64
+  fde1:c8ad:df47:4fa0::/64
+
+warp_hosts:
+  192.168.1.208
+  192.168.1.218
+  192.168.1.239
+  fde1:c8ad:df47:4fa0::14af
+  fde1:c8ad:df47:4fa0::169f
+  fde1:c8ad:df47:4fa0::1b52
+```
+
+Old `2a02:8084:2001:6620::*` WARP IPv6 entries were removed from
+`warp_hosts`. The IPv4 WARP entries were preserved.
+
+Important WARP follow-up: the ULA WARP entries above are reserved intended
+addresses. Devices at `192.168.1.208` and `192.168.1.218` were not confirmed
+online during the migration. If those devices only use SLAAC and do not take the
+reserved DHCPv6 ULA addresses, discover their actual `fde1:*` addresses with
+`ndp -an` after they are online and update `warp_hosts`. Until that is verified,
+their IPv4 WARP policy remains intact, but their IPv6 WARP priority cannot be
+considered fully proven.
+
+Validation:
+
+```sh
+xmllint --noout /conf/config.xml
+dhcpd -6 -t -cf /var/dhcpd/etc/dhcpdv6.conf
+/usr/local/sbin/pluginctl -s dhcpd6 status
+/usr/local/sbin/pluginctl -s radvd status
+```
+
+Observed result:
+
+```text
+config.xml valid
+DHCPv6 config valid
+dhcpd6 is running as pid 56081
+radvd is running as pid 83947
+```
+
+Client state after RA/DHCPv6 renewal on `Xiaoyus-MBP`:
+
+```text
+en0:
+  inet 192.168.1.115/24
+  inet6 fde1:c8ad:df47:4fa0:14da:ddcf:eb93:3105/64 autoconf secured
+  inet6 fde1:c8ad:df47:4fa0::1e35/64 dynamic
+  default -> fe80::2f0:cbff:feef:e54a%en0
+```
+
+Client IPv6-only tests:
+
+```sh
+curl -6 --connect-timeout 8 -sS -I https://ipv6.google.com/
+curl -6 --connect-timeout 8 -sS -I https://one.one.one.one/
+curl -6 --interface fde1:c8ad:df47:4fa0:14da:ddcf:eb93:3105 --connect-timeout 8 -sS -I https://one.one.one.one/
+```
+
+Observed result:
+
+```text
+HTTP/2 200
+```
+
+PF state confirmed NAT66 source translation:
+
+```text
+2a02:8084:2001:6600:2f0:cbff:feef:e549 (...) \
+  (fde1:c8ad:df47:4fa0:14da:ddcf:eb93:3105[54689]) \
+  -> 2606:4700:4700::1111[443]
+```
+
+Browser verification on `https://test-ipv6.com/`:
+
+```text
+Public IPv4: 37.228.238.194
+Public IPv6: 2a02:8084:2001:6600:2f0:cbff:feef:e549
+IPv6 score: 10/10
+```
+
+### RA Service Note
+
+Use the OPNsense plugin wrapper for Router Advertisements:
+
+```sh
+/usr/local/sbin/pluginctl -c radvd
+/usr/local/sbin/pluginctl -s radvd restart
+/usr/local/sbin/pluginctl -s radvd status
+```
+
+Do not use `service radvd restart` for this setup. During implementation,
+`service radvd onerestart` started the FreeBSD package default config:
+
+```text
+/usr/local/sbin/radvd -p /var/run/radvd.pid -C /usr/local/etc/radvd.conf
+```
+
+That file is an example config and does not advertise LAN `igc1`. The symptom
+was that clients kept a ULA address but had no IPv6 default route through LAN.
+
+Correct process after repair:
+
+```text
+/usr/local/sbin/radvd -d1 -p /var/run/radvd.pid -C /var/etc/radvd.conf -m syslog
+```
+
+If the wrong process is running with the same pidfile, stop it and let OPNsense
+start the generated config:
+
+```sh
+kill "$(cat /var/run/radvd.pid)"
+/usr/local/sbin/pluginctl -c radvd
+ps auxww | grep radvd
+```
+
+### Rollback From Full LAN NAT66
+
+The direct rollback is to restore the backup taken before the full-LAN change:
+
+```sh
+cp /conf/config.xml.codex-lan-ula-nat66-20260630-233248 /conf/config.xml
+xmllint --noout /conf/config.xml
+/usr/local/etc/rc.configure_interface lan
+/usr/local/sbin/pluginctl -s dhcpd6 restart
+/usr/local/sbin/pluginctl -c radvd
+configctl filter reload
+```
+
+Then verify:
+
+```sh
+ifconfig igc1
+netstat -rn -f inet6
+cat /var/etc/radvd.conf
+cat /var/dhcpd/etc/dhcpdv6.conf
+pfctl -sn
+pfctl -sr
+```
+
+Manual rollback equivalent:
+
+1. Restore LAN IPv6 tracking/idassoc6 settings.
+2. Re-add the previous LAN ULA VIP only if returning to the single-client test
+   state.
+3. Remove `NAT66_LAN_V6`.
+4. Remove or disable `Allow LAN IPv6 via WAN NAT66`.
+5. Remove or disable `NAT66 LAN IPv6 to WAN address`.
+6. Restore any previous DHCPv6 DNS/static-map values only if intentionally
+   returning to the pre-migration state.
+7. Reload LAN interface, DHCPv6, RA, aliases, and filter.
 
 ## Topology
 
@@ -79,7 +404,7 @@ That IPv4 result is expected to be less useful for this diagnosis because the
 connection is DS-Lite. In this setup IPv4 is carried through the ISP DS-Lite
 path, while native IPv6 is the primary transport.
 
-## Local Client State
+## Initial Local Client State (2026-06-30)
 
 The Mac on the LAN had IPv6 addresses on `en0`, including:
 
@@ -94,11 +419,12 @@ It also had an IPv6 default route via the OPNsense LAN link-local address:
 default -> fe80::2f0:cbff:feef:e54a%en0
 ```
 
-This is internally inconsistent with the current OPNsense LAN prefix, which is
-`2a02:8084:2001:6610::/64`. The client address in `6620::/64` appears to be a
-stale or previously reserved prefix, not the current routed LAN prefix.
+This was internally inconsistent with the diagnosis-time OPNsense LAN prefix,
+which was `2a02:8084:2001:6610::/64`. The client address in `6620::/64`
+appeared to be a stale or previously reserved prefix, not the then-active routed
+LAN prefix.
 
-## OPNsense Interface State
+## Initial OPNsense Interface State (2026-06-30)
 
 WAN interface `igc0`:
 
@@ -129,9 +455,9 @@ OPNsense IPv6 default route:
 default -> fe80::b6f2:67ff:fe1a:5545%igc0
 ```
 
-## OPNsense IPv6 Services
+## Initial OPNsense IPv6 Services (2026-06-30)
 
-`radvd` was running on LAN and advertising the current LAN prefix:
+`radvd` was running on LAN and advertising the diagnosis-time LAN prefix:
 
 ```text
 interface igc1
@@ -239,10 +565,10 @@ No replies were observed. This points upstream of OPNsense: the packets leave
 OPNsense, but the Connect Box or ISP path does not return traffic for the LAN
 prefix.
 
-## OPNsense Firewall State
+## Initial OPNsense Firewall State (2026-06-30)
 
-The OPNsense PF rules contain this explicit block before the later default LAN
-IPv6 allow rule:
+At diagnosis time, the OPNsense PF rules contained this explicit block before
+the later default LAN IPv6 allow rule:
 
 ```text
 block return in log quick on igc1 inet6 from (igc1:network) to ! <Local_Networks>
@@ -263,8 +589,8 @@ pass in quick on igc1 inet6 from (igc1:network) to any
 ```
 
 Do not remove or disable the `Reject non-WARP LAN IPv6 internet` rule unless the
-upstream routed-prefix problem is fixed, or unless all intended IPv6 egress is
-being routed through WARP.
+upstream routed-prefix problem is fixed, or unless an explicit NAT66/WARP pass
+rule has already handled the intended IPv6 egress before this reject rule.
 
 ## WARP State
 
@@ -284,7 +610,8 @@ nat on wg1 inet6 from <warp_hosts> to any -> (wg1:0)
 pass in quick on igc1 route-to (wg1 2606:4700:110:8e08:fe8:72eb:5c58:1337) inet6 from <warp_hosts> to ! <warp_disabled>
 ```
 
-The current `warp_hosts` table contains:
+Before the ULA-only migration, the `warp_hosts` table contained stale
+`6620::*` entries:
 
 ```text
 192.168.1.208
@@ -295,9 +622,20 @@ The current `warp_hosts` table contains:
 2a02:8084:2001:6620::1b52
 ```
 
+After the 2026-07-01 ULA-only migration, the loaded `warp_hosts` table contains
+the original IPv4 entries plus intended ULA reservations:
+
+```text
+192.168.1.208
+192.168.1.218
+192.168.1.239
+fde1:c8ad:df47:4fa0::14af
+fde1:c8ad:df47:4fa0::169f
+fde1:c8ad:df47:4fa0::1b52
+```
+
 The Mac that was tested had IPv4 `192.168.1.115`, so it was not covered by the
-existing `warp_hosts` IPv4 entries. Its current global IPv6 address was also a
-stale `6620` prefix, not the current `6610` LAN prefix.
+existing `warp_hosts` IPv4 entries.
 
 ## Connect Box Findings
 
@@ -385,31 +723,37 @@ unreliable in this topology.
 
 ## Recommended Operating Model
 
-There are now two verified IPv6 egress models:
+There are now three verified IPv6 egress states in this history:
 
 - WARP policy routing for selected clients.
 - Single-client NAT66 through the working OPNsense WAN IPv6 address.
+- Full-LAN ULA-only + WAN NAT66 for general LAN IPv6-only access.
 
-WARP remains the cleaner option when selected clients should use Cloudflare
-egress. NAT66 is the better fit when the immediate goal is only "this LAN
-client can access IPv6-only sites" and the loss of end-to-end IPv6 is
-acceptable.
+Current recommendation: keep full-LAN ULA-only + WAN NAT66 as the general LAN
+IPv6 egress path, and keep WARP policy routing ahead of it for selected
+`warp_hosts`. WARP remains the cleaner option when selected clients should use
+Cloudflare egress. NAT66 is the better fit when the goal is "LAN clients can
+access IPv6-only sites" and the loss of end-to-end IPv6 is acceptable.
 
-Recommended WARP cleanup steps:
+Recommended follow-up cleanup steps:
 
-1. Keep `Reject non-WARP LAN IPv6 internet (upstream PD not routed)` enabled.
-2. Put clients that need IPv6 internet into `warp_hosts` using stable IPv4 DHCP
-   reservations, not changing ISP global IPv6 addresses.
+1. Keep `Reject non-WARP LAN IPv6 internet (upstream PD not routed)` enabled
+   after the WARP and NAT66 pass rules.
+2. Confirm the WARP devices at `192.168.1.208`, `192.168.1.218`, and
+   `192.168.1.239` have matching ULA entries in `warp_hosts`, either via
+   DHCPv6 reservations or observed SLAAC addresses.
 3. Ensure WARP NAT66 on `wg1` remains enabled for `warp_hosts`.
-4. Remove or replace stale `2a02:8084:2001:6620::*` entries in aliases and
-   DHCPv6 static mappings.
-5. Change DHCPv6 DNS from the stale `2a02:8084:2001:6620::1` to a stable value.
-   Prefer ULA or IPv4 DNS if the ISP global prefix changes.
-6. Reconnect clients or renew DHCPv6 leases.
+4. After old leases are gone, remove transitional `2a02:8084:2001:6610::/64`
+   from `NAT66_LAN_V6` if it is no longer needed.
+5. After verifying no dependency remains, remove stale
+   `2a02:8084:2001:6620::/64` from `Local_Networks`.
+6. Reconnect clients or renew DHCPv6 leases if they still show old GUA
+   addresses.
 7. Re-test `https://test-ipv6.com/`.
 
-This gives usable IPv6, but the external IPv6 address will be WARP/Cloudflare,
-not the ISP native IPv6 prefix.
+General LAN NAT66 gives usable IPv6, but the external IPv6 address is the
+OPNsense WAN IPv6 address, not a LAN client's native IPv6. WARP devices should
+show Cloudflare/WARP egress instead.
 
 ## NAT66 / ULA Single-Client Test
 
