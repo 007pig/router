@@ -467,6 +467,43 @@ sufficient to make the downstream OPNsense LAN prefix routable. The root cause
 remains upstream prefix routing or Connect Box router-mode behavior, not a
 simple enabled IPv6 firewall checkbox.
 
+### Neighbor Discovery Capture: 2026-06-30
+
+To check whether an NDP proxy or IPv6 passthrough workaround is likely to help,
+OPNsense WAN `igc0` was monitored for ICMPv6 Neighbor Solicitation and Neighbor
+Advertisement packets while a second SSH session triggered LAN-prefix-sourced
+IPv6 traffic.
+
+Capture command:
+
+```sh
+tcpdump -n -i igc0 -c 40 'icmp6 and (ip6[40] == 135 or ip6[40] == 136)'
+```
+
+Traffic trigger, run twice:
+
+```sh
+curl -6 --interface 2a02:8084:2001:6610::1 --connect-timeout 8 -sS -I https://one.one.one.one/
+```
+
+Observed trigger results:
+
+```text
+curl: (28) Connection timed out after 8014 milliseconds
+curl: (28) Connection timed out after 8008 milliseconds
+```
+
+No matching ICMPv6 Neighbor Solicitation or Neighbor Advertisement packets were
+observed on `igc0` during the two attempts. The capture was stopped manually
+after the second timeout.
+
+Interpretation: during this test, the Connect Box did not visibly try to resolve
+the OPNsense LAN-prefix address on the WAN-side Ethernet segment. That makes an
+OPNsense-side NDP proxy/relay workaround less promising. It does not prove
+whether reply traffic is dropped by the ISP before reaching the Connect Box or
+by the Connect Box itself, but it provides no evidence that the Connect Box is
+waiting for OPNsense to answer neighbor discovery for `2a02:8084:2001:6610::/64`.
+
 ## Do Not Do
 
 - Do not remove the OPNsense non-WARP LAN IPv6 block until upstream return
@@ -532,6 +569,12 @@ Capture LAN-prefix-sourced packets on OPNsense WAN:
 
 ```sh
 tcpdump -n -i igc0 -c 3 "ip6 and src host 2a02:8084:2001:6610::1"
+```
+
+Capture IPv6 neighbor discovery on OPNsense WAN:
+
+```sh
+tcpdump -n -i igc0 -c 40 'icmp6 and (ip6[40] == 135 or ip6[40] == 136)'
 ```
 
 Inspect OPNsense PF rules:
