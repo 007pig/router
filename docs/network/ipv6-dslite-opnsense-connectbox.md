@@ -28,10 +28,12 @@ The strongest evidence is:
   `Reject non-WARP LAN IPv6 internet (upstream PD not routed)`, which blocks
   non-WARP LAN IPv6 internet access before it can time out.
 
-The practical conclusion is that native LAN IPv6 through this Connect Box router
-mode is not currently usable for OPNsense downstream clients. Use WARP for LAN
-IPv6 egress, or obtain an ISP/modem mode that can route a downstream delegated
-prefix to OPNsense.
+The practical conclusion is that native routed LAN IPv6 through this Connect
+Box router mode is not currently usable for OPNsense downstream clients. WARP
+remains a stable IPv6 egress option for selected clients. A later single-client
+NAT66/ULA test also proved that outbound client access to IPv6-only sites can be
+restored by translating selected LAN IPv6 sources to the working OPNsense WAN
+IPv6 address.
 
 ## Topology
 
@@ -383,9 +385,17 @@ unreliable in this topology.
 
 ## Recommended Operating Model
 
-Use WARP as the IPv6 internet egress path for LAN clients that need IPv6.
+There are now two verified IPv6 egress models:
 
-Recommended steps:
+- WARP policy routing for selected clients.
+- Single-client NAT66 through the working OPNsense WAN IPv6 address.
+
+WARP remains the cleaner option when selected clients should use Cloudflare
+egress. NAT66 is the better fit when the immediate goal is only "this LAN
+client can access IPv6-only sites" and the loss of end-to-end IPv6 is
+acceptable.
+
+Recommended WARP cleanup steps:
 
 1. Keep `Reject non-WARP LAN IPv6 internet (upstream PD not routed)` enabled.
 2. Put clients that need IPv6 internet into `warp_hosts` using stable IPv4 DHCP
@@ -400,6 +410,113 @@ Recommended steps:
 
 This gives usable IPv6, but the external IPv6 address will be WARP/Cloudflare,
 not the ISP native IPv6 prefix.
+
+## NAT66 / ULA Single-Client Test
+
+Date applied: 2026-06-30
+
+Goal: restore outbound IPv6 access for the test Mac only, without changing the
+Connect Box and without making all LAN clients use direct IPv6.
+
+OPNsense config backup created before the change:
+
+```text
+/conf/config.xml.codex-nat66-test-20260630-230205
+```
+
+Applied OPNsense changes:
+
+- Added LAN IP Alias `fde1:c8ad:df47:4fa0::1/64` on `igc1`.
+- Added alias `NAT66_TEST_CLIENT_V6` with:
+
+  ```text
+  2a02:8084:2001:6610::1e35
+  fde1:c8ad:df47:4fa0:14da:ddcf:eb93:3105
+  ```
+
+- Added `fde1:c8ad:df47:4fa0::/64` to `Local_Networks`.
+- Added LAN IPv6 pass rule immediately before the non-WARP IPv6 reject rule:
+
+  ```text
+  TEST allow NAT66 client IPv6 to WAN
+  ```
+
+- Added WAN outbound NAT66 rule:
+
+  ```text
+  TEST NAT66 selected LAN IPv6 to WAN address
+  ```
+
+Post-apply checks:
+
+```text
+igc1 has inet6 fde1:c8ad:df47:4fa0::1/64
+route table has fde1:c8ad:df47:4fa0::/64 on igc1
+nat on igc0 inet6 from <NAT66_TEST_CLIENT_V6> to any -> (igc0:0)
+pass in quick on igc1 inet6 from <NAT66_TEST_CLIENT_V6> to ! <Local_Networks>
+```
+
+The LAN pass rule is loaded before the existing block:
+
+```text
+pass in quick on igc1 inet6 from <NAT66_TEST_CLIENT_V6> to ! <Local_Networks>
+block return in log quick on igc1 inet6 from (igc1:network) to ! <Local_Networks>
+```
+
+Client-side tests from the Mac succeeded:
+
+```sh
+curl -6 --connect-timeout 8 -sS -I https://ipv6.google.com/
+curl -6 --connect-timeout 8 -sS -I https://one.one.one.one/
+curl -6 --interface fde1:c8ad:df47:4fa0:14da:ddcf:eb93:3105 --connect-timeout 8 -sS -I https://one.one.one.one/
+```
+
+Observed result:
+
+```text
+HTTP/2 200
+```
+
+WAN capture for a forced ULA-source HTTPS request to Google showed NAT66 source
+translation to the OPNsense WAN SLAAC address:
+
+```text
+2a02:8084:2001:6600:2f0:cbff:feef:e549 > 2a00:1450:400b:c01::71.443
+```
+
+The original ULA source was:
+
+```text
+fde1:c8ad:df47:4fa0:14da:ddcf:eb93:3105
+```
+
+Chrome browser verification on `https://test-ipv6.com/` succeeded:
+
+```text
+Public IPv6 address: 2a02:8084:2001:6600:2f0:cbff:feef:e549
+IPv6 score: 10/10
+```
+
+Interpretation: NAT66 is a viable workaround for the stated goal, which is
+client access to IPv6-only sites. It does not restore end-to-end native IPv6 and
+does not provide inbound IPv6 reachability to LAN clients.
+
+Rollback for this test:
+
+1. Disable or delete outbound NAT rule
+   `TEST NAT66 selected LAN IPv6 to WAN address`.
+2. Disable or delete LAN firewall rule `TEST allow NAT66 client IPv6 to WAN`.
+3. Remove `fde1:c8ad:df47:4fa0::/64` from `Local_Networks`.
+4. Delete alias `NAT66_TEST_CLIENT_V6`.
+5. Delete LAN IP Alias `fde1:c8ad:df47:4fa0::1/64`.
+6. Reload VIPs and firewall, then verify:
+
+   ```sh
+   ifconfig igc1
+   pfctl -sn
+   pfctl -sr
+   netstat -rn -f inet6
+   ```
 
 ## Optional Verification Test
 
