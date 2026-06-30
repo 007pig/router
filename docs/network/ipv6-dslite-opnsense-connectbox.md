@@ -346,13 +346,16 @@ The Connect Box UI did not expose:
 Security pages:
 
 ```text
-IPv6 firewall: Enabled
+IPv6 firewall protection: unchecked / disabled when visually verified on 2026-06-30
 IPv6 port filtering: No filtering rule applied
 ```
 
-The modem has no custom IPv6 port filtering rules, but its global IPv6 firewall
-is enabled. It may be part of the return-path issue, or the modem may simply not
-support downstream routed prefixes in router mode.
+The modem has no custom IPv6 port filtering rules. The firewall page label text
+uses `Enabled` as the checkbox label, but the actual visual state of the IPv6
+firewall protection checkbox was unchecked during the follow-up verification.
+This makes the Connect Box global IPv6 firewall less likely to be the blocker.
+The more likely issue is that the modem or ISP path does not route the
+downstream prefix back to OPNsense in router mode.
 
 ## Root Cause Assessment
 
@@ -422,6 +425,47 @@ Interpretation:
   downstream prefix to OPNsense in router mode.
 
 This test changes modem firewall behavior and should be done only intentionally.
+
+### Verification Result: 2026-06-30
+
+The Connect Box firewall page was rechecked after logging in. The `IPv6
+firewall -> Firewall protection` checkbox was already unchecked, and the `Apply
+changes` button was disabled. No Connect Box setting was changed and no restore
+action was needed.
+
+In that current unchecked state, OPNsense still could not use the LAN delegated
+prefix as an IPv6 source for HTTPS:
+
+```sh
+curl -6 --interface 2a02:8084:2001:6610::1 --connect-timeout 8 -sS -I https://one.one.one.one/
+```
+
+Observed result:
+
+```text
+curl: (28) Connection timed out after 8030 milliseconds
+```
+
+The WAN IPv6 source still worked as a control:
+
+```sh
+curl -6 --interface 2a02:8084:2001:6600::b3 --connect-timeout 8 -sS -I https://one.one.one.one/
+```
+
+Observed result:
+
+```text
+HTTP/2 200
+```
+
+ICMP commands were not completed in this follow-up pass due to command approval
+tooling failure, but earlier ICMP tests already showed the same pattern:
+WAN-sourced IPv6 worked and LAN-prefix-sourced IPv6 timed out.
+
+Conclusion: disabling the visible Connect Box IPv6 firewall protection is not
+sufficient to make the downstream OPNsense LAN prefix routable. The root cause
+remains upstream prefix routing or Connect Box router-mode behavior, not a
+simple enabled IPv6 firewall checkbox.
 
 ## Do Not Do
 
@@ -502,4 +546,3 @@ pfctl -t warp_hosts -T show
 ## Related Documents
 
 - [OPNsense + Shelly Modem Watchdog](../operations/opnsense-shelly-modem-watchdog.md)
-
