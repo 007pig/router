@@ -6,6 +6,7 @@ behavior that affects OPNsense routing.
 ## Documents
 
 - [OPNsense IPv6 over DS-Lite with Connect Box](ipv6-dslite-opnsense-connectbox.md)
+- [Wi-Fi AP and Mesh Topology](wifi-ap-mesh-topology.md)
 
 Related operational inventory:
 

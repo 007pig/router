@@ -8,6 +8,7 @@ operations, and cable modem behavior.
 ## Network
 
 - [OPNsense IPv6 over DS-Lite with Connect Box](network/ipv6-dslite-opnsense-connectbox.md)
+- [Wi-Fi AP and Mesh Topology](network/wifi-ap-mesh-topology.md)
 
 ## Operations
 
