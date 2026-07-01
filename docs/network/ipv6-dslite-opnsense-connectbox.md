@@ -212,12 +212,15 @@ NAT66_LAN_V6:
   fde1:c8ad:df47:4fa0::/64
 
 warp_hosts:
+  192.168.1.115
   192.168.1.208
   192.168.1.218
   192.168.1.239
   fde1:c8ad:df47:4fa0::14af
   fde1:c8ad:df47:4fa0::169f
   fde1:c8ad:df47:4fa0::1b52
+  fde1:c8ad:df47:4fa0::1e35
+  fde1:c8ad:df47:4fa0:14da:ddcf:eb93:3105
 ```
 
 Old `2a02:8084:2001:6620::*` WARP IPv6 entries were removed from
@@ -623,19 +626,26 @@ Before the ULA-only migration, the `warp_hosts` table contained stale
 ```
 
 After the 2026-07-01 ULA-only migration, the loaded `warp_hosts` table contains
-the original IPv4 entries plus intended ULA reservations:
+the original IPv4 entries, the tested Mac's IPv4 and current ULA addresses, and
+intended ULA reservations:
 
 ```text
+192.168.1.115
 192.168.1.208
 192.168.1.218
 192.168.1.239
 fde1:c8ad:df47:4fa0::14af
 fde1:c8ad:df47:4fa0::169f
 fde1:c8ad:df47:4fa0::1b52
+fde1:c8ad:df47:4fa0::1e35
+fde1:c8ad:df47:4fa0:14da:ddcf:eb93:3105
 ```
 
-The Mac that was tested had IPv4 `192.168.1.115`, so it was not covered by the
-existing `warp_hosts` IPv4 entries.
+The Mac that was tested has IPv4 `192.168.1.115`, which was added to
+`warp_hosts` on 2026-07-01. Its current LAN ULA addresses
+`fde1:c8ad:df47:4fa0::1e35` and
+`fde1:c8ad:df47:4fa0:14da:ddcf:eb93:3105` were added at the same time so both
+IPv4 and IPv6 policy routing can match the client.
 
 ## Connect Box Findings
 
