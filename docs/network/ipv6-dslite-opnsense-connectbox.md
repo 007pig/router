@@ -44,6 +44,9 @@ Current operating model as of 2026-07-01:
 - This restores outbound IPv6 usability, but not end-to-end native IPv6 or
   inbound IPv6 reachability.
 
+Current full non-default OPNsense configuration inventory:
+[OPNsense Current Non-Default Configuration](../operations/opnsense-current-non-default-config.md).
+
 ## Current State: Full LAN ULA-only + NAT66
 
 Date applied: 2026-07-01 local session time. OPNsense backup timestamps are in
@@ -93,16 +96,23 @@ Applied OPNsense changes:
   The `6610::/64` entry is transitional while clients age out old addresses.
   The current Mac had already moved to ULA by the end of verification.
 
-- `Local_Networks` now includes:
+- `Local_Networks` currently loads as:
 
   ```text
+  10.0.0.0/8
+  172.16.0.0/12
+  192.168.0.0/16
+  192.168.1.0/24
+  2606:4700:110:89ed::/64
   fde1:c8ad:df47:4fa0::/64
   2a02:8084:2001:6610::/64
   2a02:8084:2001:6620::/64
   ```
 
   The old `6620::/64` entry was intentionally left in place during this change
-  to avoid mixing cleanup with the migration.
+  to avoid mixing cleanup with the migration. The `2606:4700:110:89ed::/64`
+  entry is also present in the current table and should not be removed without
+  first confirming its dependency.
 
 - The single-client LAN rule `TEST allow NAT66 client IPv6 to WAN` was replaced
   by:

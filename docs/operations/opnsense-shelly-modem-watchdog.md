@@ -5,11 +5,17 @@ Date: 2026-06-30
 Related network diagnostic:
 [OPNsense IPv6 over DS-Lite with Connect Box](../network/ipv6-dslite-opnsense-connectbox.md).
 
+Related current configuration inventory:
+[OPNsense Current Non-Default Configuration](opnsense-current-non-default-config.md).
+
 This document records the modem watchdog installed on the OPNsense router. The goal is to reboot the cable modem automatically when the IPv4 WAN gateway stays down, while ignoring IPv6-only gateway changes.
 
 ## Current State
 
 The watchdog is installed and enabled on OPNsense.
+
+Verified again by read-only inspection on 2026-07-01: the script is executable,
+`DRY_RUN` is still `false`, and the target gateway is still `WAN_DHCP`.
 
 OPNsense router:
 

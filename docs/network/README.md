@@ -7,3 +7,6 @@ behavior that affects OPNsense routing.
 
 - [OPNsense IPv6 over DS-Lite with Connect Box](ipv6-dslite-opnsense-connectbox.md)
 
+Related operational inventory:
+
+- [OPNsense Current Non-Default Configuration](../operations/opnsense-current-non-default-config.md)

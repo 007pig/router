@@ -12,4 +12,4 @@ operations, and cable modem behavior.
 ## Operations
 
 - [OPNsense + Shelly Modem Watchdog](operations/opnsense-shelly-modem-watchdog.md)
-
+- [OPNsense Current Non-Default Configuration](operations/opnsense-current-non-default-config.md)
