@@ -176,23 +176,23 @@ interface igc1 {
 };
 ```
 
-Generated DHCPv6 config:
+Current Dnsmasq DHCP config after the 2026-07-01 DHCP migration:
 
 ```text
-subnet6 fde1:c8ad:df47:4fa0::/64 {
-  range6 fde1:c8ad:df47:4fa0::1000 fde1:c8ad:df47:4fa0::1fff;
-  option dhcp6.name-servers fde1:c8ad:df47:4fa0::1;
-}
-
-host s_lan_0 {
-  fixed-address6 fde1:c8ad:df47:4fa0::1e35;
-  option host-name "Xiaoyus-MBP";
-}
-
-host s_lan_1 {
-  fixed-address6 fde1:c8ad:df47:4fa0::1d7d;
-}
+port=53053
+interface=igc1
+dhcp-range=tag:igc1,192.168.1.10,192.168.1.250,86400
+dhcp-range=tag:igc1,::1000,::1fff,constructor:igc1,64,86400
+dhcp-option=tag:igc1,3,192.168.1.1
+dhcp-option=tag:igc1,6,192.168.1.1
+dhcp-option=tag:igc1,option6:23,[fde1:c8ad:df47:4fa0::1]
 ```
+
+Generated static host reservations were migrated from ISC to Dnsmasq, with MAC
+addresses and DHCPv6 DUIDs intentionally omitted from this document. The
+generated Dnsmasq config contains 22 `dhcp-host` entries: 20 IPv4 reservations
+and 2 DHCPv6 reservations. Dnsmasq Router Advertisements are disabled; RA
+remains handled by `radvd`.
 
 Loaded NAT rules include:
 
@@ -248,8 +248,9 @@ Validation:
 
 ```sh
 xmllint --noout /conf/config.xml
-dhcpd -6 -t -cf /var/dhcpd/etc/dhcpdv6.conf
-/usr/local/sbin/pluginctl -s dhcpd6 status
+/usr/local/sbin/dnsmasq --test --conf-file=/usr/local/etc/dnsmasq.conf
+/usr/local/sbin/configctl dnsmasq status
+/usr/local/sbin/configctl unbound check
 /usr/local/sbin/pluginctl -s radvd status
 ```
 
@@ -257,8 +258,9 @@ Observed result:
 
 ```text
 config.xml valid
-DHCPv6 config valid
-dhcpd6 is running as pid 56081
+dnsmasq: syntax check OK.
+dnsmasq is running as pid 60329
+no errors in /var/unbound/unbound.conf
 radvd is running as pid 83947
 ```
 
@@ -302,6 +304,33 @@ Public IPv6: 2a02:8084:2001:6600:2f0:cbff:feef:e549
 IPv6 score: 10/10
 ```
 
+After the 2026-07-01 Dnsmasq DHCP migration, a direct LAN-client IPv6 HTTPS
+test still succeeded:
+
+```sh
+curl -6 --connect-timeout 8 -sS -I https://one.one.one.one/
+```
+
+Observed result:
+
+```text
+HTTP/2 200
+```
+
+DNS validation after the DHCP migration:
+
+```text
+Dnsmasq 127.0.0.1:53053 resolves Xiaoyus-MBP.localdomain A -> 192.168.1.115
+Unbound 127.0.0.1:5353 resolves Xiaoyus-MBP.localdomain A -> 192.168.1.115
+AdGuardHome 127.0.0.1:53 resolves Xiaoyus-MBP.localdomain A -> 192.168.1.115
+Unknown localdomain names return NXDOMAIN locally.
+```
+
+Immediately after cutover, `Xiaoyus-MBP.localdomain` AAAA did not resolve
+through Dnsmasq because the client had not yet renewed a DHCPv6 lease from
+Dnsmasq. Recheck DHCPv6 dynamic DNS registration after clients renew or
+reconnect.
+
 ### RA Service Note
 
 Use the OPNsense plugin wrapper for Router Advertisements:
@@ -337,9 +366,39 @@ kill "$(cat /var/run/radvd.pid)"
 ps auxww | grep radvd
 ```
 
+### Rollback From Dnsmasq DHCP Migration
+
+After the later ISC plugin removal, rollback to ISC DHCP requires reinstalling
+`os-isc-dhcp` first. Then restore the pre-Dnsmasq backup:
+
+```sh
+pkg install -y os-isc-dhcp
+cp /conf/config.xml.codex-pre-model-dnsmasq-dhcp-20260701-084425 /conf/config.xml
+xmllint --noout /conf/config.xml
+/usr/local/sbin/configctl dnsmasq stop
+/usr/local/sbin/configctl dhcpd start
+/usr/local/sbin/configctl dhcpd6 start
+/usr/local/sbin/configctl unbound restart
+/usr/local/sbin/pluginctl -c radvd
+configctl filter reload
+```
+
+Then verify:
+
+```sh
+sockstat -46 -l | egrep '(:67|:547|dnsmasq|dhcpd)'
+/usr/local/sbin/pluginctl -s dhcpd status
+/usr/local/sbin/pluginctl -s dhcpd6 status
+/usr/local/sbin/pluginctl -s radvd status
+```
+
 ### Rollback From Full LAN NAT66
 
 The direct rollback is to restore the backup taken before the full-LAN change:
+
+Note: this rollback target predates the 2026-07-01 Dnsmasq DHCP migration, so
+it also returns DHCP service to ISC unless the DHCP migration is reapplied
+afterwards.
 
 ```sh
 cp /conf/config.xml.codex-lan-ula-nat66-20260630-233248 /conf/config.xml
@@ -360,6 +419,10 @@ cat /var/dhcpd/etc/dhcpdv6.conf
 pfctl -sn
 pfctl -sr
 ```
+
+The `dhcpdv6.conf` check above applies only after restoring that historical
+pre-Dnsmasq backup. In the current Dnsmasq DHCP state, check
+`/usr/local/etc/dnsmasq.conf` instead.
 
 Manual rollback equivalent:
 
@@ -1023,13 +1086,13 @@ cat /var/etc/radvd.conf
 Check generated DHCPv6 config:
 
 ```sh
-cat /var/dhcpd/etc/dhcpdv6.conf
+grep -E '^(port=|interface=|dhcp-range=|dhcp-option=|enable-ra)' /usr/local/etc/dnsmasq.conf
 ```
 
 Check DHCPv6 leases:
 
 ```sh
-tail -n 160 /var/dhcpd/var/db/dhcpd6.leases
+/usr/local/sbin/configctl dnsmasq list leases
 ```
 
 Test WAN-sourced IPv6:
