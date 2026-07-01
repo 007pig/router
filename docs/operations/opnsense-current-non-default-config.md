@@ -51,6 +51,22 @@ Shelly settings were intentionally changed as part of the DHCP migration.
 After the Dnsmasq migration was validated, `os-isc-dhcp` and its orphaned
 `isc-dhcp44-server` dependency were uninstalled.
 
+Later on 2026-07-01 at router UTC time `11:55:00` through `12:06`, the 21
+legacy filter rules were migrated to `Firewall -> Rules [new]` using the
+OPNsense migration export/import model. The CSV import reported 21 inserted
+rules, 0 updated rules, and 0 validation errors. No manual CSV corrections were
+needed. After validation, all legacy filter rules were removed. Final rule
+counts:
+
+```text
+legacy_filter_rules=0
+new_filter_rules=21
+```
+
+No aliases, NAT, port forwards, DHCP/Dnsmasq, Router Advertisements, WARP,
+Tailscale, AdGuardHome, Zenarmor, Connect Box, or Shelly settings were
+intentionally changed during the firewall rules migration.
+
 Migration backups retained on OPNsense:
 
 ```text
@@ -58,6 +74,9 @@ Migration backups retained on OPNsense:
 /conf/config.xml.codex-dnsmasq-dhcp-migration-20260701-082142
 /conf/config.xml.codex-pre-model-dnsmasq-dhcp-20260701-084425
 /conf/config.xml.codex-pre-isc-dhcp-plugin-uninstall-20260701-114036
+/conf/codex-fw-rules-new-migration-20260701-115500/
+/conf/config.xml.pre-fw-rules-new-20260701-115500
+ZFS snapshot: zroot@pre-fw-rules-new-20260701-115500
 ```
 
 ## Interface Inventory
@@ -387,17 +406,21 @@ Notes:
 
 ## Firewall Policy
 
-Important explicit rules, in effective order from the OPNsense configuration:
+The explicit filter rules are now managed under `Firewall -> Rules [new]`.
+Important explicit rules, in effective PF order after the migration:
 
 ```text
-Floating:
+Rules [new] global/floating:
   pass out IPv4 from WAN_WARP address via WARP gateway
   pass out IPv6 from WAN_WARP address via WARP_IPV6 gateway
   pass logged IPv6 TCP/443 to ADGUARD_HTTPS_V6
-  block logged direct WAN IPv6 TCP/443 to ADGUARD_HTTPS_V6
   pass logged IPv4 TCP/443 to ADGUARD_HTTPS_V4
+
+WAN:
+  block logged direct WAN IPv6 TCP/443 to ADGUARD_HTTPS_V6
   block logged direct WAN IPv4 TCP/443 to ADGUARD_HTTPS_V4
   pass WAN UDP/53 from WAN address with state cap rule label
+  pass inbound IPv6 UDP/41641 to WAN address for Tailscale direct connectivity
 
 LAN:
   pass warp_hosts to !warp_disabled via WARP IPv4 gateway
@@ -415,9 +438,6 @@ LAN:
 TAILSCALE:
   pass IPv4 from 100.64.0.0/10
   pass IPv6 from fd7a:115c:a1e0::/48
-
-WAN:
-  pass inbound IPv6 UDP/41641 to WAN address for Tailscale direct connectivity
 ```
 
 Operationally important ordering:
