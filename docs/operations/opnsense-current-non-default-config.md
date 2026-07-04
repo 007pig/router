@@ -75,6 +75,19 @@ No aliases, NAT, port forwards, DHCP/Dnsmasq, Router Advertisements, WARP,
 Tailscale, AdGuardHome, Zenarmor, Connect Box, or Shelly settings were
 intentionally changed during the firewall rules migration.
 
+Later on 2026-07-01 at router UTC time `17:50` through `17:55`, a DNS-resolved
+host alias named `ChatGPT_WARP_DISABLED` was added and included in
+`warp_disabled`. This excludes the exact FQDNs `chatgpt.com`, `cdn.auth0.com`,
+and `ws.chatgpt.com` from WARP policy routing for all `warp_hosts` clients.
+This is a PF table / DNS-resolved IP exclusion, not HTTP Host or TLS SNI
+filtering. Because these services use Cloudflare and CloudFront addresses with
+low TTLs, the runtime table contents can change as OPNsense refreshes aliases.
+At validation time, `ChatGPT_WARP_DISABLED` and the nested `warp_disabled`
+runtime PF tables were populated with the current A/AAAA results. Existing
+pre-change ChatGPT/Auth0 WARP states from `warp_hosts` clients were cleared
+only for the current `ChatGPT_WARP_DISABLED` destinations so new sessions use
+WAN/NAT66.
+
 Later on 2026-07-04 at router UTC time `12:40` through `12:47`, a cron-based
 WAN link speed watchdog was installed to notify when physical WAN interface
 `igc0` is active but no longer negotiated as `1000baseT <full-duplex>`. The
@@ -93,6 +106,8 @@ Migration backups retained on OPNsense:
 /conf/codex-fw-rules-new-migration-20260701-115500/
 /conf/config.xml.pre-fw-rules-new-20260701-115500
 ZFS snapshot: zroot@pre-fw-rules-new-20260701-115500
+/conf/codex-chatgpt-warp-exclusion-20260701-175015/
+/conf/config.xml.pre-chatgpt-warp-exclusion-20260701-175015
 ```
 
 ## Interface Inventory
@@ -378,6 +393,12 @@ warp_disabled (network):
   Local_Networks
   Netflix
   Perplexity
+  ChatGPT_WARP_DISABLED
+
+ChatGPT_WARP_DISABLED (host):
+  chatgpt.com
+  cdn.auth0.com
+  ws.chatgpt.com
 
 Perplexity (host):
   23.22.208.105
