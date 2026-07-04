@@ -12,6 +12,7 @@ operations, and cable modem behavior.
 
 ## Operations
 
+- [OPNsense Gateway ntfy Alert](operations/opnsense-gateway-ntfy-alert.md)
 - [OPNsense WAN Link Speed Watchdog](operations/opnsense-wan-link-speed-watchdog.md)
 - [OPNsense + Shelly Modem Watchdog](operations/opnsense-shelly-modem-watchdog.md)
 - [OPNsense Current Non-Default Configuration](operations/opnsense-current-non-default-config.md)

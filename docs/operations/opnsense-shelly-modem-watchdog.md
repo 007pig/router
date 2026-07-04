@@ -11,6 +11,9 @@ Related current configuration inventory:
 Related notification-only WAN link speed watchdog:
 [OPNsense WAN Link Speed Watchdog](opnsense-wan-link-speed-watchdog.md).
 
+Related notification-only gateway down/up alert:
+[OPNsense Gateway ntfy Alert](opnsense-gateway-ntfy-alert.md).
+
 This document records the modem watchdog installed on the OPNsense router. The goal is to reboot the cable modem automatically when the IPv4 WAN gateway stays down, while ignoring IPv6-only gateway changes.
 
 ## Current State

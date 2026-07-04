@@ -52,6 +52,14 @@ Additional sources used on 2026-07-04 for the WAN link speed watchdog:
 - `/var/log/system/latest.log`
 - `ifconfig igc0`
 
+Additional sources used on 2026-07-04 for the Gateway ntfy alert syshook:
+
+- `/usr/local/etc/rc.syshook.d/monitor/80-gateway-ntfy-alert`
+- `/tmp/gateway-ntfy-alert.test.state`
+- `/var/db/gateway-ntfy-alert.state`
+- `/var/log/system/latest.log`
+- `/usr/local/sbin/configctl interface gateways status`
+
 The initial inventory was read-only. Later on 2026-07-01, LAN DHCPv4 and
 DHCPv6 were migrated from ISC DHCP to Dnsmasq DHCP. Router Advertisements stayed
 on `radvd`; no modem, WARP, Tailscale, AdGuardHome, Zenarmor, firewall, NAT, or
@@ -95,6 +103,14 @@ notification target is the local ntfy server topic
 `http://192.168.1.182/opnsense-alerts`. This is a notification-only watchdog:
 it does not call Shelly, power-cycle the modem, change gateway monitoring,
 modify WARP policy routing, or alter firewall/NAT rules.
+
+Later on 2026-07-04 at router UTC time `13:59` through `14:05`, an OPNsense
+Gateway Monitor syshook named `80-gateway-ntfy-alert` was installed to notify
+when any affected gateway changes to down/offline or is restored Online. The
+notification target is the same local ntfy topic
+`http://192.168.1.182/opnsense-alerts`. This is notification-only: it does not
+call Shelly, power-cycle the modem, change gateway monitoring, modify WARP
+policy routing, or alter firewall/NAT rules.
 
 Migration backups retained on OPNsense:
 
@@ -786,6 +802,48 @@ log entry. cron was restarted with:
 This watchdog is notification-only and independent of the modem watchdog. See:
 [OPNsense WAN Link Speed Watchdog](opnsense-wan-link-speed-watchdog.md).
 
+## Gateway ntfy Alert Syshook
+
+The Gateway Monitor ntfy alert syshook is installed and executable:
+
+```text
+/usr/local/etc/rc.syshook.d/monitor/80-gateway-ntfy-alert
+repository source: scripts/opnsense/gateway-ntfy-alert
+permissions: -rwxr-xr-x root wheel
+sha256: e6999a96599283b675392107b0577c90fa849baacfdcd84123aa77c87f95a799
+```
+
+Current constants:
+
+```php
+const LOG_TAG = 'gateway-ntfy-alert';
+const NTFY_URL = 'http://192.168.1.182/opnsense-alerts';
+const STATE_FILE = '/var/db/gateway-ntfy-alert.state';
+const TEST_STATE_FILE = '/tmp/gateway-ntfy-alert.test.state';
+const LOCK_FILE = '/var/run/gateway-ntfy-alert.lock';
+const CONFIRM_DELAY_SECONDS = 10;
+const NTFY_TIMEOUT_SECONDS = 8;
+```
+
+Validation on 2026-07-04 confirmed:
+
+```text
+ntfy health: {"healthy":true}
+real dry-run:
+  WAN_DHCP   state=up status=none translated=Online source=configctl
+  WAN_DHCP6  state=up status=none translated=Online source=configctl
+  WARP       state=up status=none translated=Online source=configctl
+  WARP_IPV6  state=up status=none translated=Online source=configctl
+production state file: not yet created during dry-run/test-mode validation
+test notifications sent:
+  [TEST] OPNsense gateway down
+  [TEST] OPNsense gateway restored
+loss state behavior: logged only, no ntfy notification
+```
+
+This syshook is notification-only and independent of the modem watchdog. See:
+[OPNsense Gateway ntfy Alert](opnsense-gateway-ntfy-alert.md).
+
 ## Modem Watchdog Syshook
 
 The modem watchdog is installed and executable:
@@ -836,5 +894,6 @@ Configuration items worth revisiting before future cleanup:
 ## Related Documents
 
 - [OPNsense IPv6 over DS-Lite with Connect Box](../network/ipv6-dslite-opnsense-connectbox.md)
+- [OPNsense Gateway ntfy Alert](opnsense-gateway-ntfy-alert.md)
 - [OPNsense WAN Link Speed Watchdog](opnsense-wan-link-speed-watchdog.md)
 - [OPNsense + Shelly Modem Watchdog](opnsense-shelly-modem-watchdog.md)

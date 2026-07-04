@@ -8,6 +8,9 @@ Related current configuration inventory:
 Related modem watchdog:
 [OPNsense + Shelly Modem Watchdog](opnsense-shelly-modem-watchdog.md).
 
+Related notification-only gateway down/up alert:
+[OPNsense Gateway ntfy Alert](opnsense-gateway-ntfy-alert.md).
+
 This document records the WAN Ethernet link-speed watchdog installed on the
 OPNsense router. Its only job is to notify when the physical WAN port stops
 negotiating gigabit Ethernet. It does not reboot the modem, call Shelly, alter

@@ -1,0 +1,464 @@
+#!/usr/local/bin/php
+<?php
+
+const LOG_TAG = 'gateway-ntfy-alert';
+const NTFY_URL = 'http://192.168.1.182/opnsense-alerts';
+const STATE_FILE = '/var/db/gateway-ntfy-alert.state';
+const TEST_STATE_FILE = '/tmp/gateway-ntfy-alert.test.state';
+const LOCK_FILE = '/var/run/gateway-ntfy-alert.lock';
+const CONFIRM_DELAY_SECONDS = 10;
+const NTFY_TIMEOUT_SECONDS = 8;
+
+function ga_log(string $message, string $priority = 'daemon.notice'): void
+{
+    $cmd = '/usr/bin/logger -t ' . escapeshellarg(LOG_TAG) .
+        ' -p ' . escapeshellarg($priority) .
+        ' ' . escapeshellarg($message);
+    exec($cmd);
+}
+
+function parse_args(array $argv): array
+{
+    $opts = [
+        'affected' => null,
+        'confirm_delay' => CONFIRM_DELAY_SECONDS,
+        'dry_run' => false,
+        'reset_test_state' => false,
+        'test_gateway' => null,
+        'test_status' => null,
+        'test_status_translated' => null,
+        'test_address' => '',
+        'test_monitor' => '',
+        'test_loss' => '',
+        'test_delay' => '',
+    ];
+
+    for ($i = 1; $i < count($argv); $i++) {
+        $arg = $argv[$i];
+        if ($arg === '--dry-run') {
+            $opts['dry_run'] = true;
+        } elseif ($arg === '--reset-test-state') {
+            $opts['reset_test_state'] = true;
+        } elseif ($arg === '--affected') {
+            if (!isset($argv[$i + 1])) {
+                fwrite(STDERR, "--affected requires a value\n");
+                exit(2);
+            }
+            $opts['affected'] = $argv[++$i];
+        } elseif (str_starts_with($arg, '--affected=')) {
+            $opts['affected'] = substr($arg, strlen('--affected='));
+        } elseif ($arg === '--confirm-delay') {
+            if (!isset($argv[$i + 1])) {
+                fwrite(STDERR, "--confirm-delay requires a value\n");
+                exit(2);
+            }
+            $opts['confirm_delay'] = max(0, (int)$argv[++$i]);
+        } elseif (str_starts_with($arg, '--confirm-delay=')) {
+            $opts['confirm_delay'] = max(0, (int)substr($arg, strlen('--confirm-delay=')));
+        } elseif ($arg === '--test-gateway') {
+            if (!isset($argv[$i + 1])) {
+                fwrite(STDERR, "--test-gateway requires a value\n");
+                exit(2);
+            }
+            $opts['test_gateway'] = $argv[++$i];
+        } elseif (str_starts_with($arg, '--test-gateway=')) {
+            $opts['test_gateway'] = substr($arg, strlen('--test-gateway='));
+        } elseif ($arg === '--test-status') {
+            if (!isset($argv[$i + 1])) {
+                fwrite(STDERR, "--test-status requires a value\n");
+                exit(2);
+            }
+            $opts['test_status'] = $argv[++$i];
+        } elseif (str_starts_with($arg, '--test-status=')) {
+            $opts['test_status'] = substr($arg, strlen('--test-status='));
+        } elseif ($arg === '--test-status-translated') {
+            if (!isset($argv[$i + 1])) {
+                fwrite(STDERR, "--test-status-translated requires a value\n");
+                exit(2);
+            }
+            $opts['test_status_translated'] = $argv[++$i];
+        } elseif (str_starts_with($arg, '--test-status-translated=')) {
+            $opts['test_status_translated'] = substr($arg, strlen('--test-status-translated='));
+        } elseif ($arg === '--test-address') {
+            if (!isset($argv[$i + 1])) {
+                fwrite(STDERR, "--test-address requires a value\n");
+                exit(2);
+            }
+            $opts['test_address'] = $argv[++$i];
+        } elseif (str_starts_with($arg, '--test-address=')) {
+            $opts['test_address'] = substr($arg, strlen('--test-address='));
+        } elseif ($arg === '--test-monitor') {
+            if (!isset($argv[$i + 1])) {
+                fwrite(STDERR, "--test-monitor requires a value\n");
+                exit(2);
+            }
+            $opts['test_monitor'] = $argv[++$i];
+        } elseif (str_starts_with($arg, '--test-monitor=')) {
+            $opts['test_monitor'] = substr($arg, strlen('--test-monitor='));
+        } elseif ($arg === '--test-loss') {
+            if (!isset($argv[$i + 1])) {
+                fwrite(STDERR, "--test-loss requires a value\n");
+                exit(2);
+            }
+            $opts['test_loss'] = $argv[++$i];
+        } elseif (str_starts_with($arg, '--test-loss=')) {
+            $opts['test_loss'] = substr($arg, strlen('--test-loss='));
+        } elseif ($arg === '--test-delay') {
+            if (!isset($argv[$i + 1])) {
+                fwrite(STDERR, "--test-delay requires a value\n");
+                exit(2);
+            }
+            $opts['test_delay'] = $argv[++$i];
+        } elseif (str_starts_with($arg, '--test-delay=')) {
+            $opts['test_delay'] = substr($arg, strlen('--test-delay='));
+        } elseif ($opts['affected'] === null) {
+            $opts['affected'] = $arg;
+        } else {
+            fwrite(STDERR, "unknown argument: {$arg}\n");
+            exit(2);
+        }
+    }
+
+    if ($opts['test_gateway'] !== null && $opts['test_status'] === null) {
+        fwrite(STDERR, "--test-status is required with --test-gateway\n");
+        exit(2);
+    }
+
+    return $opts;
+}
+
+function split_names(?string $raw): array
+{
+    if ($raw === null || trim($raw) === '') {
+        return [];
+    }
+    $items = array_map('trim', explode(',', $raw));
+    return array_values(array_filter($items, static fn($v) => $v !== ''));
+}
+
+function acquire_lock()
+{
+    $fh = fopen(LOCK_FILE, 'c');
+    if ($fh === false) {
+        throw new RuntimeException('failed to open lock file ' . LOCK_FILE);
+    }
+    if (!flock($fh, LOCK_EX | LOCK_NB)) {
+        echo "another instance is already running\n";
+        exit(0);
+    }
+    return $fh;
+}
+
+function normalize_gateways(array $raw): array
+{
+    $result = [];
+    foreach ($raw as $key => $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $name = (string)($entry['name'] ?? $key);
+        if ($name === '') {
+            continue;
+        }
+        $result[$name] = $entry;
+    }
+    return $result;
+}
+
+function gateways_from_php(): array
+{
+    try {
+        require_once '/usr/local/etc/inc/config.inc';
+        require_once '/usr/local/etc/inc/legacy_bindings.inc';
+        if (!function_exists('return_gateways_status')) {
+            return [];
+        }
+        $raw = return_gateways_status();
+        return is_array($raw) ? normalize_gateways($raw) : [];
+    } catch (Throwable $e) {
+        ga_log('return_gateways_status failed: ' . $e->getMessage(), 'daemon.warning');
+        return [];
+    }
+}
+
+function gateways_from_configctl(): array
+{
+    $json = @shell_exec('/usr/local/sbin/configctl interface gateways status 2>/dev/null');
+    if (!is_string($json) || trim($json) === '') {
+        return [];
+    }
+    $raw = json_decode($json, true);
+    if (!is_array($raw)) {
+        ga_log('configctl gateway status returned invalid JSON', 'daemon.warning');
+        return [];
+    }
+    return normalize_gateways($raw);
+}
+
+function read_gateways(array $opts): array
+{
+    if ($opts['test_gateway'] !== null) {
+        $translated = $opts['test_status_translated'];
+        if ($translated === null) {
+            $translated = gateway_state_from_status($opts['test_status']) === 'up' ? 'Online' : '';
+        }
+        return [
+            'source' => 'test',
+            'gateways' => [
+                $opts['test_gateway'] => [
+                    'name' => $opts['test_gateway'],
+                    'address' => $opts['test_address'],
+                    'status' => $opts['test_status'],
+                    'status_translated' => $translated,
+                    'monitor' => $opts['test_monitor'],
+                    'loss' => $opts['test_loss'],
+                    'delay' => $opts['test_delay'],
+                ],
+            ],
+        ];
+    }
+
+    $gateways = gateways_from_php();
+    if (!empty($gateways)) {
+        return ['source' => 'return_gateways_status', 'gateways' => $gateways];
+    }
+
+    return ['source' => 'configctl', 'gateways' => gateways_from_configctl()];
+}
+
+function gateway_state_from_status(string $status, string $translated = ''): string
+{
+    $status = strtolower(trim($status));
+    $translated = strtolower(trim($translated));
+
+    if ($status === 'offline' || strpos($status, 'down') !== false) {
+        return 'down';
+    }
+    if ($status === 'none' || $translated === 'online') {
+        return 'up';
+    }
+    return 'other';
+}
+
+function load_state(string $path): array
+{
+    if (!is_file($path)) {
+        return [];
+    }
+    $raw = file_get_contents($path);
+    if ($raw === false || trim($raw) === '') {
+        return [];
+    }
+    $state = json_decode($raw, true);
+    return is_array($state) ? $state : [];
+}
+
+function save_state(string $path, array $state): void
+{
+    $json = json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
+    if (file_put_contents($path, $json, LOCK_EX) === false) {
+        throw new RuntimeException('failed to write state file ' . $path);
+    }
+}
+
+function ntfy_send(string $title, string $priority, string $tags, string $body, bool $dry_run): bool
+{
+    if ($dry_run) {
+        echo "DRY_RUN ntfy title={$title} priority={$priority} tags={$tags}\n{$body}\n";
+        return true;
+    }
+
+    $cmd = implode(' ', [
+        '/usr/local/bin/curl',
+        '-fsS',
+        '--connect-timeout',
+        escapeshellarg((string)NTFY_TIMEOUT_SECONDS),
+        '--max-time',
+        escapeshellarg((string)(NTFY_TIMEOUT_SECONDS + 5)),
+        '-H',
+        escapeshellarg("Title: {$title}"),
+        '-H',
+        escapeshellarg("Priority: {$priority}"),
+        '-H',
+        escapeshellarg("Tags: {$tags}"),
+        '-H',
+        escapeshellarg('Content-Type: text/plain; charset=utf-8'),
+        '--data-binary',
+        '@-',
+        escapeshellarg(NTFY_URL),
+    ]);
+
+    $descriptor_spec = [
+        0 => ['pipe', 'r'],
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ];
+    $process = proc_open($cmd, $descriptor_spec, $pipes);
+    if (!is_resource($process)) {
+        ga_log('ntfy send failed; could not start curl', 'daemon.err');
+        return false;
+    }
+
+    fwrite($pipes[0], $body);
+    fclose($pipes[0]);
+    $stdout = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[2]);
+    $exit_code = proc_close($process);
+
+    if ($exit_code !== 0) {
+        ga_log("ntfy send failed; curl_exit={$exit_code} stderr=" . trim($stderr) . " stdout=" . trim($stdout), 'daemon.err');
+        return false;
+    }
+    return true;
+}
+
+function gateway_value(array $gateway, string $key): string
+{
+    return (string)($gateway[$key] ?? '');
+}
+
+function build_body(string $name, array $gateway, string $state, string $source, bool $is_test): string
+{
+    $prefix = $is_test ? "[TEST] " : "";
+    return $prefix .
+        "host: " . gethostname() . "\n" .
+        "gateway: " . $name . "\n" .
+        "state: " . $state . "\n" .
+        "status: " . gateway_value($gateway, 'status') . "\n" .
+        "status_translated: " . gateway_value($gateway, 'status_translated') . "\n" .
+        "address: " . gateway_value($gateway, 'address') . "\n" .
+        "monitor: " . gateway_value($gateway, 'monitor') . "\n" .
+        "loss: " . gateway_value($gateway, 'loss') . "\n" .
+        "delay: " . gateway_value($gateway, 'delay') . "\n" .
+        "source: " . $source . "\n" .
+        "time: " . gmdate('c') . "\n";
+}
+
+function next_record(string $state, array $gateway, string $source, int $now, ?array $previous): array
+{
+    $now_iso = gmdate('c', $now);
+    $previous_state = $previous['state'] ?? null;
+    return [
+        'state' => $state,
+        'status' => gateway_value($gateway, 'status'),
+        'status_translated' => gateway_value($gateway, 'status_translated'),
+        'address' => gateway_value($gateway, 'address'),
+        'monitor' => gateway_value($gateway, 'monitor'),
+        'loss' => gateway_value($gateway, 'loss'),
+        'delay' => gateway_value($gateway, 'delay'),
+        'source' => $source,
+        'updated_at' => $now_iso,
+        'changed_at' => $previous_state === $state ? ($previous['changed_at'] ?? $now_iso) : $now_iso,
+        'last_notified' => $previous['last_notified'] ?? 0,
+    ];
+}
+
+$opts = parse_args($argv);
+$is_test = $opts['test_gateway'] !== null;
+$state_file = $is_test ? TEST_STATE_FILE : STATE_FILE;
+$affected = $is_test ? [$opts['test_gateway']] : split_names($opts['affected']);
+
+if ($opts['reset_test_state']) {
+    @unlink(TEST_STATE_FILE);
+}
+
+try {
+    $lock = acquire_lock();
+
+    if (empty($affected)) {
+        ga_log('no affected gateways provided; exiting');
+        echo "no affected gateways provided\n";
+        exit(0);
+    }
+
+    if ($opts['confirm_delay'] > 0) {
+        sleep($opts['confirm_delay']);
+    }
+
+    $read = read_gateways($opts);
+    $gateways = $read['gateways'];
+    $source = $read['source'];
+    $state = load_state($state_file);
+    $changed = false;
+    $now = time();
+
+    foreach ($affected as $name) {
+        if (!isset($gateways[$name])) {
+            ga_log("affected gateway not found after confirmation; gateway={$name} source={$source}", 'daemon.warning');
+            echo "gateway={$name} state=missing source={$source}\n";
+            continue;
+        }
+
+        $gateway = $gateways[$name];
+        $current_state = gateway_state_from_status(
+            gateway_value($gateway, 'status'),
+            gateway_value($gateway, 'status_translated')
+        );
+        $previous = is_array($state[$name] ?? null) ? $state[$name] : null;
+        $previous_state = $previous['state'] ?? null;
+        $should_notify = false;
+        $title = '';
+        $priority = 'default';
+        $tags = 'router';
+        $reason = '';
+
+        if ($current_state === 'down') {
+            if ($previous_state !== 'down') {
+                $should_notify = true;
+                $title = ($is_test ? '[TEST] ' : '') . 'OPNsense gateway down';
+                $priority = 'high';
+                $tags = 'warning,router';
+                $reason = 'state-change';
+            }
+            $state[$name] = next_record('down', $gateway, $source, $now, $previous);
+            $changed = true;
+        } elseif ($current_state === 'up') {
+            if ($previous_state === 'down') {
+                $should_notify = true;
+                $title = ($is_test ? '[TEST] ' : '') . 'OPNsense gateway restored';
+                $priority = 'default';
+                $tags = 'white_check_mark,router';
+                $reason = 'restored';
+            }
+            $state[$name] = next_record('up', $gateway, $source, $now, $previous);
+            $changed = true;
+        } else {
+            ga_log(
+                "gateway state is not down/up; gateway={$name} status=" . gateway_value($gateway, 'status') .
+                " translated=" . gateway_value($gateway, 'status_translated') .
+                " loss=" . gateway_value($gateway, 'loss') .
+                " delay=" . gateway_value($gateway, 'delay') .
+                " source={$source}"
+            );
+            if ($previous_state !== 'down') {
+                $state[$name] = next_record('other', $gateway, $source, $now, $previous);
+                $changed = true;
+            }
+        }
+
+        if ($should_notify) {
+            $body = build_body($name, $gateway, $current_state, $source, $is_test);
+            if (ntfy_send($title, $priority, $tags, $body, $opts['dry_run'])) {
+                ga_log("notification sent; gateway={$name} state={$current_state} reason={$reason} status=" . gateway_value($gateway, 'status'));
+                $state[$name]['last_notified'] = $now;
+                $changed = true;
+            }
+        }
+
+        echo "gateway={$name} state={$current_state} status=" . gateway_value($gateway, 'status') .
+            " translated=" . gateway_value($gateway, 'status_translated') .
+            " source={$source}\n";
+    }
+
+    if ($changed && !$opts['dry_run']) {
+        save_state($state_file, $state);
+    }
+
+    exit(0);
+} catch (Throwable $e) {
+    ga_log('error: ' . $e->getMessage(), 'daemon.err');
+    fwrite(STDERR, $e->getMessage() . "\n");
+    exit(1);
+}
