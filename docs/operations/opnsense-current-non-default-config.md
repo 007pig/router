@@ -614,8 +614,18 @@ advertise exit node: yes
 accept subnet routes: no
 Tailscale SSH: disabled
 disable SNAT: no
-advertised subnets: none in OPNsense config
+stateful filtering: disabled
+advertised routes observed 2026-07-04:
+  0.0.0.0/0
+  ::/0
+  192.168.1.0/24
+  fd7a:115c:a1e0:b1a:0:7:c0a8:100/120
 ```
+
+The `fd7a:115c:a1e0:b1a:0:7:c0a8:100/120` route is the Tailscale 4via6
+representation of the LAN `192.168.1.0/24` subnet through this subnet router.
+MagicDNS names such as `192-168-1-181-via-7` use this path and hairpin through
+OPNsense even when the client is already on the LAN.
 
 Runtime listeners:
 
