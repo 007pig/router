@@ -44,6 +44,14 @@ Configuration and runtime sources:
 - `/usr/local/sbin/configctl unbound check`
 - `/usr/local/etc/rc.syshook.d/monitor/90-modem-watchdog`
 
+Additional sources used on 2026-07-04 for the WAN link speed watchdog:
+
+- `/usr/local/sbin/wan-link-speed-watchdog`
+- `/usr/local/etc/cron.d/wan-link-speed-watchdog`
+- `/var/db/wan-link-speed-watchdog.state`
+- `/var/log/system/latest.log`
+- `ifconfig igc0`
+
 The initial inventory was read-only. Later on 2026-07-01, LAN DHCPv4 and
 DHCPv6 were migrated from ISC DHCP to Dnsmasq DHCP. Router Advertisements stayed
 on `radvd`; no modem, WARP, Tailscale, AdGuardHome, Zenarmor, firewall, NAT, or
@@ -66,6 +74,14 @@ new_filter_rules=21
 No aliases, NAT, port forwards, DHCP/Dnsmasq, Router Advertisements, WARP,
 Tailscale, AdGuardHome, Zenarmor, Connect Box, or Shelly settings were
 intentionally changed during the firewall rules migration.
+
+Later on 2026-07-04 at router UTC time `12:40` through `12:47`, a cron-based
+WAN link speed watchdog was installed to notify when physical WAN interface
+`igc0` is active but no longer negotiated as `1000baseT <full-duplex>`. The
+notification target is the local ntfy server topic
+`http://192.168.1.182/opnsense-alerts`. This is a notification-only watchdog:
+it does not call Shelly, power-cycle the modem, change gateway monitoring,
+modify WARP policy routing, or alter firewall/NAT rules.
 
 Migration backups retained on OPNsense:
 
@@ -690,6 +706,65 @@ os-vnstat
 legacy `dhcpd` user/group present; they are not used by the current Dnsmasq
 DHCP service.
 
+## WAN Link Speed Watchdog Cron
+
+The WAN link speed watchdog is installed and executable:
+
+```text
+/usr/local/sbin/wan-link-speed-watchdog
+repository source: scripts/opnsense/wan-link-speed-watchdog
+permissions: -rwxr-xr-x root wheel
+sha256: 5c09cf0c9bdb24a5f64a0722e377c9180db46d1a872bca68debb09a0fa6f6b42
+```
+
+The cron.d entry is installed:
+
+```text
+/usr/local/etc/cron.d/wan-link-speed-watchdog
+permissions: -rw-r--r-- root wheel
+sha256: 492ea06f8019b861e2e7d60ee2e7bf71a4eeee74e9d4365c6f01e4bc9946ef51
+schedule: every minute
+```
+
+Current constants:
+
+```php
+const LOG_TAG = 'wan-link-speed-watchdog';
+const TARGET_INTERFACE = 'igc0';
+const EXPECTED_MEDIA = '1000baseT <full-duplex>';
+const NTFY_URL = 'http://192.168.1.182/opnsense-alerts';
+const STATE_FILE = '/var/db/wan-link-speed-watchdog.state';
+const TEST_STATE_FILE = '/tmp/wan-link-speed-watchdog.test.state';
+const LOCK_FILE = '/var/run/wan-link-speed-watchdog.lock';
+const REMINDER_SECONDS = 3600;
+const NTFY_TIMEOUT_SECONDS = 8;
+```
+
+Current production state after cron verification on 2026-07-04:
+
+```json
+{
+    "state": "ok",
+    "status": "active",
+    "media": "Ethernet autoselect (1000baseT <full-duplex>)",
+    "source": "ifconfig",
+    "updated_at": "2026-07-04T12:47:00+00:00",
+    "last_notified": 0,
+    "changed_at": "2026-07-04T12:40:51+00:00"
+}
+```
+
+Validation sent `[TEST]` degraded, reminder, and restored notifications to
+`http://192.168.1.182/opnsense-alerts`. A simulated link-down run only wrote a
+log entry. cron was restarted with:
+
+```sh
+/usr/local/sbin/pluginctl -s cron restart
+```
+
+This watchdog is notification-only and independent of the modem watchdog. See:
+[OPNsense WAN Link Speed Watchdog](opnsense-wan-link-speed-watchdog.md).
+
 ## Modem Watchdog Syshook
 
 The modem watchdog is installed and executable:
@@ -740,4 +815,5 @@ Configuration items worth revisiting before future cleanup:
 ## Related Documents
 
 - [OPNsense IPv6 over DS-Lite with Connect Box](../network/ipv6-dslite-opnsense-connectbox.md)
+- [OPNsense WAN Link Speed Watchdog](opnsense-wan-link-speed-watchdog.md)
 - [OPNsense + Shelly Modem Watchdog](opnsense-shelly-modem-watchdog.md)

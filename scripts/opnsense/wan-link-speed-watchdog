@@ -1,0 +1,286 @@
+#!/usr/local/bin/php
+<?php
+
+const LOG_TAG = 'wan-link-speed-watchdog';
+const TARGET_INTERFACE = 'igc0';
+const EXPECTED_MEDIA = '1000baseT <full-duplex>';
+const NTFY_URL = 'http://192.168.1.182/opnsense-alerts';
+const STATE_FILE = '/var/db/wan-link-speed-watchdog.state';
+const TEST_STATE_FILE = '/tmp/wan-link-speed-watchdog.test.state';
+const LOCK_FILE = '/var/run/wan-link-speed-watchdog.lock';
+const REMINDER_SECONDS = 3600;
+const NTFY_TIMEOUT_SECONDS = 8;
+
+function ww_log(string $message): void
+{
+    $cmd = '/usr/bin/logger -t ' . escapeshellarg(LOG_TAG) . ' ' . escapeshellarg($message);
+    exec($cmd);
+}
+
+function parse_args(array $argv): array
+{
+    $opts = [
+        'dry_run' => false,
+        'test_media' => null,
+        'test_status' => 'active',
+        'reset_test_state' => false,
+    ];
+
+    for ($i = 1; $i < count($argv); $i++) {
+        $arg = $argv[$i];
+        if ($arg === '--dry-run') {
+            $opts['dry_run'] = true;
+        } elseif ($arg === '--reset-test-state') {
+            $opts['reset_test_state'] = true;
+        } elseif ($arg === '--test-media') {
+            if (!isset($argv[$i + 1])) {
+                fwrite(STDERR, "--test-media requires a value\n");
+                exit(2);
+            }
+            $opts['test_media'] = $argv[++$i];
+        } elseif (str_starts_with($arg, '--test-media=')) {
+            $opts['test_media'] = substr($arg, strlen('--test-media='));
+        } elseif ($arg === '--test-status') {
+            if (!isset($argv[$i + 1])) {
+                fwrite(STDERR, "--test-status requires a value\n");
+                exit(2);
+            }
+            $opts['test_status'] = $argv[++$i];
+        } elseif (str_starts_with($arg, '--test-status=')) {
+            $opts['test_status'] = substr($arg, strlen('--test-status='));
+        } else {
+            fwrite(STDERR, "unknown argument: {$arg}\n");
+            exit(2);
+        }
+    }
+
+    return $opts;
+}
+
+function read_link_state(array $opts): array
+{
+    if ($opts['test_media'] !== null) {
+        return [
+            'interface' => TARGET_INTERFACE,
+            'media' => $opts['test_media'],
+            'status' => $opts['test_status'],
+            'source' => 'test',
+        ];
+    }
+
+    $cmd = '/sbin/ifconfig ' . escapeshellarg(TARGET_INTERFACE);
+    exec($cmd, $lines, $code);
+    if ($code !== 0) {
+        throw new RuntimeException("ifconfig failed for " . TARGET_INTERFACE);
+    }
+
+    $media = '';
+    $status = '';
+    foreach ($lines as $line) {
+        $trimmed = trim($line);
+        if (str_starts_with($trimmed, 'media:')) {
+            $media = trim(substr($trimmed, strlen('media:')));
+        } elseif (str_starts_with($trimmed, 'status:')) {
+            $status = trim(substr($trimmed, strlen('status:')));
+        }
+    }
+
+    return [
+        'interface' => TARGET_INTERFACE,
+        'media' => $media,
+        'status' => $status,
+        'source' => 'ifconfig',
+    ];
+}
+
+function classify_state(array $link): string
+{
+    if ($link['status'] !== 'active') {
+        return 'down';
+    }
+    if (strpos($link['media'], EXPECTED_MEDIA) !== false) {
+        return 'ok';
+    }
+    return 'degraded';
+}
+
+function load_state(string $path): array
+{
+    if (!is_file($path)) {
+        return [];
+    }
+    $raw = file_get_contents($path);
+    if ($raw === false || trim($raw) === '') {
+        return [];
+    }
+    $state = json_decode($raw, true);
+    return is_array($state) ? $state : [];
+}
+
+function save_state(string $path, array $state): void
+{
+    $json = json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
+    if (file_put_contents($path, $json, LOCK_EX) === false) {
+        throw new RuntimeException("failed to write state file {$path}");
+    }
+}
+
+function ntfy_send(string $title, string $priority, string $tags, string $body, bool $dry_run): bool
+{
+    if ($dry_run) {
+        echo "DRY_RUN ntfy title={$title} priority={$priority} tags={$tags}\n{$body}\n";
+        return true;
+    }
+
+    $cmd = implode(' ', [
+        '/usr/local/bin/curl',
+        '-fsS',
+        '--connect-timeout',
+        escapeshellarg((string)NTFY_TIMEOUT_SECONDS),
+        '--max-time',
+        escapeshellarg((string)(NTFY_TIMEOUT_SECONDS + 5)),
+        '-H',
+        escapeshellarg("Title: {$title}"),
+        '-H',
+        escapeshellarg("Priority: {$priority}"),
+        '-H',
+        escapeshellarg("Tags: {$tags}"),
+        '-H',
+        escapeshellarg('Content-Type: text/plain; charset=utf-8'),
+        '--data-binary',
+        '@-',
+        escapeshellarg(NTFY_URL),
+    ]);
+
+    $descriptor_spec = [
+        0 => ['pipe', 'r'],
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ];
+    $process = proc_open($cmd, $descriptor_spec, $pipes);
+    if (!is_resource($process)) {
+        ww_log('ntfy send failed; could not start curl');
+        return false;
+    }
+
+    fwrite($pipes[0], $body);
+    fclose($pipes[0]);
+    $stdout = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[2]);
+    $exit_code = proc_close($process);
+
+    if ($exit_code !== 0) {
+        ww_log("ntfy send failed; curl_exit={$exit_code} stderr=" . trim($stderr) . " stdout=" . trim($stdout));
+        return false;
+    }
+    return true;
+}
+
+function build_body(array $link, string $state, string $expected, bool $is_test): string
+{
+    $prefix = $is_test ? "[TEST] " : "";
+    return $prefix .
+        "host: " . gethostname() . "\n" .
+        "interface: " . $link['interface'] . "\n" .
+        "state: " . $state . "\n" .
+        "status: " . $link['status'] . "\n" .
+        "media: " . $link['media'] . "\n" .
+        "expected: " . $expected . "\n" .
+        "time: " . gmdate('c') . "\n";
+}
+
+function acquire_lock()
+{
+    $handle = fopen(LOCK_FILE, 'c');
+    if ($handle === false) {
+        throw new RuntimeException("failed to open lock file " . LOCK_FILE);
+    }
+    if (!flock($handle, LOCK_EX | LOCK_NB)) {
+        echo "another instance is already running\n";
+        exit(0);
+    }
+    return $handle;
+}
+
+$opts = parse_args($argv);
+$is_test = $opts['test_media'] !== null;
+$state_file = $is_test ? TEST_STATE_FILE : STATE_FILE;
+$lock = acquire_lock();
+
+if ($opts['reset_test_state']) {
+    @unlink(TEST_STATE_FILE);
+}
+
+try {
+    $link = read_link_state($opts);
+    $current_state = classify_state($link);
+    $previous = load_state($state_file);
+    $previous_state = $previous['state'] ?? null;
+    $now = time();
+    $now_iso = gmdate('c', $now);
+    $last_notified = isset($previous['last_notified']) ? (int)$previous['last_notified'] : 0;
+
+    $should_notify = false;
+    $title = '';
+    $priority = 'default';
+    $tags = 'ethernet';
+    $reason = '';
+
+    if ($current_state === 'degraded') {
+        if ($previous_state !== 'degraded') {
+            $should_notify = true;
+            $reason = 'state-change';
+        } elseif ($now - $last_notified >= REMINDER_SECONDS) {
+            $should_notify = true;
+            $reason = 'reminder';
+        }
+        $title = ($is_test ? '[TEST] ' : '') . 'OPNsense WAN link degraded';
+        $priority = 'high';
+        $tags = 'warning,ethernet';
+    } elseif ($current_state === 'ok' && $previous_state !== null && $previous_state !== 'ok') {
+        $should_notify = true;
+        $reason = 'restored';
+        $title = ($is_test ? '[TEST] ' : '') . 'OPNsense WAN link restored';
+        $priority = 'default';
+        $tags = 'white_check_mark,ethernet';
+    } elseif ($current_state === 'down' && $previous_state !== 'down') {
+        ww_log("WAN link is not active; interface=" . TARGET_INTERFACE . " status={$link['status']} media={$link['media']}");
+    }
+
+    if ($should_notify) {
+        $body = build_body($link, $current_state, EXPECTED_MEDIA, $is_test);
+        $sent = ntfy_send($title, $priority, $tags, $body, $opts['dry_run']);
+        if ($sent) {
+            ww_log("notification sent; state={$current_state} reason={$reason} media={$link['media']}");
+            $last_notified = $now;
+        }
+    }
+
+    $next = [
+        'state' => $current_state,
+        'status' => $link['status'],
+        'media' => $link['media'],
+        'source' => $link['source'],
+        'updated_at' => $now_iso,
+        'last_notified' => $last_notified,
+    ];
+
+    if ($previous_state !== $current_state) {
+        $next['changed_at'] = $now_iso;
+    } else {
+        $next['changed_at'] = $previous['changed_at'] ?? $now_iso;
+    }
+
+    if (!$opts['dry_run']) {
+        save_state($state_file, $next);
+    }
+
+    echo "interface={$link['interface']} state={$current_state} status={$link['status']} media={$link['media']} source={$link['source']}\n";
+    exit(0);
+} catch (Throwable $e) {
+    ww_log("error: " . $e->getMessage());
+    fwrite(STDERR, $e->getMessage() . "\n");
+    exit(1);
+}

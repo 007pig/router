@@ -8,6 +8,9 @@ Related network diagnostic:
 Related current configuration inventory:
 [OPNsense Current Non-Default Configuration](opnsense-current-non-default-config.md).
 
+Related notification-only WAN link speed watchdog:
+[OPNsense WAN Link Speed Watchdog](opnsense-wan-link-speed-watchdog.md).
+
 This document records the modem watchdog installed on the OPNsense router. The goal is to reboot the cable modem automatically when the IPv4 WAN gateway stays down, while ignoring IPv6-only gateway changes.
 
 ## Current State
