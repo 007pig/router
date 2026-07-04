@@ -1,0 +1,4 @@
+interface:
+  display_name: "OPNsense WARP Hosts"
+  short_description: "Manage OPNsense warp_hosts safely"
+  default_prompt: "Use $opnsense-warp-hosts to add or remove a LAN client from OPNsense warp_hosts."
