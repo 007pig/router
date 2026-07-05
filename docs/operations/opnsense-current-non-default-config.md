@@ -1,6 +1,7 @@
 # OPNsense Current Non-Default Configuration
 
 Date: 2026-07-01
+Last updated: 2026-07-05
 
 This document records the current non-default OPNsense configuration observed
 from the router. It is an operational inventory, with dated notes for changes
@@ -112,6 +113,18 @@ notification target is the same local ntfy topic
 call Shelly, power-cycle the modem, change gateway monitoring, modify WARP
 policy routing, or alter firewall/NAT rules.
 
+Later on 2026-07-05 at router UTC time `08:58`, `ChatGPT_WARP_DISABLED`
+was extended with `t0.gstatic.com`, `t1.gstatic.com`, `t2.gstatic.com`, and
+`t3.gstatic.com`. The preferred wildcard form `*.gstatic.com` was not used
+because the current OPNsense `host` alias validation accepts normal FQDNs via
+`Util::isDomain()` and does not accept `*` in hostname labels; OPNsense
+`isWildcard()` handling applies to IP wildcard/netmask values instead. A
+pre-change backup was created at
+`/conf/config.xml.pre-chatgpt-warp-disabled-gstatic-20260705-085815`. After
+filter reload and alias refresh, the `ChatGPT_WARP_DISABLED` runtime PF table
+contained the current `t0` through `t3` `gstatic.com` A/AAAA results, and the
+nested `warp_disabled` table also contained those resolved addresses.
+
 Migration backups retained on OPNsense:
 
 ```text
@@ -124,6 +137,7 @@ Migration backups retained on OPNsense:
 ZFS snapshot: zroot@pre-fw-rules-new-20260701-115500
 /conf/codex-chatgpt-warp-exclusion-20260701-175015/
 /conf/config.xml.pre-chatgpt-warp-exclusion-20260701-175015
+/conf/config.xml.pre-chatgpt-warp-disabled-gstatic-20260705-085815
 ```
 
 ## Interface Inventory
@@ -415,6 +429,10 @@ ChatGPT_WARP_DISABLED (host):
   chatgpt.com
   cdn.auth0.com
   ws.chatgpt.com
+  t0.gstatic.com
+  t1.gstatic.com
+  t2.gstatic.com
+  t3.gstatic.com
 
 Perplexity (host):
   23.22.208.105
