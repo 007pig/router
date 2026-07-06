@@ -134,6 +134,34 @@ results were present in both `ChatGPT_WARP_DISABLED` and nested
 `172.64.152.56`, `2a06:98c1:3103::6812:23c8`, and
 `2a06:98c1:310c::ac40:9838`.
 
+Later on 2026-07-06 at router UTC time `17:08` through `17:29`,
+`ChatGPT_WARP_DISABLED` was migrated from a DNS-resolved `host` alias to a
+Dnsmasq-managed `external` alias with `expire=86400`. Unbound now forwards
+`chatgpt.com`, `cdn.auth0.com`, `gstatic.com`, and `images.openai.com` to
+Dnsmasq on `127.0.0.1:53053`; Dnsmasq has managed-alias `ipset` entries for
+those domains that populate the external alias from observed DNS answers.
+AdGuardHome remains the client-facing listener on TCP/UDP 53 and still forwards
+to Unbound on `127.0.0.1:5353`.
+
+During validation, domain-specific Dnsmasq `server=/domain/upstream` lines were
+found to prevent reliable `ipset` table population in this setup. The final
+configuration therefore sets Dnsmasq `no-resolv` and uses
+`/usr/local/etc/dnsmasq.conf.d/codex-chatgpt-managed-alias-upstream.conf` for
+global Cloudflare upstreams `1.1.1.1` and `1.0.0.1`. The Dnsmasq domain
+overrides intentionally generate only `ipset=` lines. No DNS bypass block,
+redirect, DoT block, Connect Box, Shelly, NAT66, WARP interface, or AdGuardHome
+filtering-policy changes were made.
+
+Two direct LAN pass rules were added before the WARP policy-routing rules:
+`warp_hosts -> ChatGPT_WARP_DISABLED` for IPv4 and IPv6 with no gateway set.
+These rules let currently populated managed-alias destinations use the normal
+WAN/NAT66 path immediately without waiting for the parent `warp_disabled` table
+to be regenerated. After Unbound target-zone cache flushes and clean queries,
+returned A/AAAA addresses for `chatgpt.com`, `ws.chatgpt.com`,
+`t0.gstatic.com`, and `images.openai.com` were all present in
+`ChatGPT_WARP_DISABLED`. Existing PF states matching the populated alias
+addresses were cleared narrowly; 37 states were dropped.
+
 Migration backups retained on OPNsense:
 
 ```text
@@ -148,6 +176,9 @@ ZFS snapshot: zroot@pre-fw-rules-new-20260701-115500
 /conf/config.xml.pre-chatgpt-warp-exclusion-20260701-175015
 /conf/config.xml.pre-chatgpt-warp-disabled-gstatic-20260705-085815
 /conf/config.xml.pre-chatgpt-warp-disabled-images-openai-20260706-161857
+/conf/config.xml.pre-chatgpt-dnsmasq-managed-alias-20260706-170829
+/conf/config.xml.pre-chatgpt-dnsmasq-managed-alias-correction-20260706-171044
+/conf/config.xml.pre-chatgpt-dnsmasq-managed-alias-global-upstream-20260706-172214
 ```
 
 ## Interface Inventory
@@ -270,6 +301,10 @@ Unbound:
     localdomain -> 127.0.0.1:53053
     1.168.192.in-addr.arpa -> 127.0.0.1:53053
     0.a.f.4.7.4.f.d.d.a.8.c.1.e.d.f.ip6.arpa -> 127.0.0.1:53053
+    chatgpt.com -> 127.0.0.1:53053
+    cdn.auth0.com -> 127.0.0.1:53053
+    gstatic.com -> 127.0.0.1:53053
+    images.openai.com -> 127.0.0.1:53053
   local zone type: transparent
 
 Dnsmasq:
@@ -277,6 +312,9 @@ Dnsmasq:
   DHCPv4 listener: UDP 67
   DHCPv6 listener: UDP 547
   DNS connector listener: TCP/UDP 53053
+  no-resolv: enabled
+  managed-alias upstream include:
+    /usr/local/etc/dnsmasq.conf.d/codex-chatgpt-managed-alias-upstream.conf
   Router Advertisements: disabled
 
 DHCPv4 DNS handed to clients:
@@ -292,7 +330,8 @@ System upstream DNS:
 
 AdGuardHome remains the client-facing port-53 listener. Unbound remains on port
 5353. Dnsmasq is not the primary DNS listener for LAN clients; it is the DHCP
-server and a local DNS connector for DHCP-registered names.
+server, a local DNS connector for DHCP-registered names, and the managed-alias
+resolver for the ChatGPT WARP exclusion domains forwarded by Unbound.
 
 ## DHCPv4 LAN
 
@@ -435,15 +474,13 @@ warp_disabled (network):
   Perplexity
   ChatGPT_WARP_DISABLED
 
-ChatGPT_WARP_DISABLED (host):
-  chatgpt.com
-  cdn.auth0.com
-  ws.chatgpt.com
-  t0.gstatic.com
-  t1.gstatic.com
-  t2.gstatic.com
-  t3.gstatic.com
-  images.openai.com
+ChatGPT_WARP_DISABLED (external):
+  expire: 86400
+  populated by Dnsmasq managed alias/ipset for:
+    chatgpt.com
+    cdn.auth0.com
+    gstatic.com
+    images.openai.com
 
 Perplexity (host):
   23.22.208.105
@@ -505,6 +542,8 @@ WAN:
   pass inbound IPv6 UDP/41641 to WAN address for Tailscale direct connectivity
 
 LAN:
+  pass warp_hosts to ChatGPT_WARP_DISABLED without WARP IPv4 gateway
+  pass warp_hosts to ChatGPT_WARP_DISABLED without WARP IPv6 gateway
   pass warp_hosts to !warp_disabled via WARP IPv4 gateway
   pass warp_hosts UDP/443 to !warp_disabled via WARP IPv4 gateway
   pass warp_hosts UDP/80 to !warp_disabled via WARP IPv4 gateway
@@ -676,7 +715,10 @@ Firewall/NAT support:
 AdGuardHome is enabled and is the observed listener on port 53. Unbound is
 enabled on port 5353 and has DNSSEC enabled. Dnsmasq listens on port 53053 as a
 local connector for DHCP-registered names and reverse zones; clients still use
-OPNsense on port 53.
+OPNsense on port 53. For ChatGPT WARP exclusions, AdGuardHome forwards to
+Unbound, Unbound forwards the managed domains to Dnsmasq, and Dnsmasq populates
+the `ChatGPT_WARP_DISABLED` external alias while using explicit Cloudflare
+upstreams from the managed include file.
 
 Static routes force AdGuard Family HTTPS destinations through WARP/WARP_IPV6.
 Floating firewall rules also pass those HTTPS destinations and block direct WAN
