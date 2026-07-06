@@ -1,7 +1,7 @@
 # OPNsense Current Non-Default Configuration
 
 Date: 2026-07-01
-Last updated: 2026-07-05
+Last updated: 2026-07-06
 
 This document records the current non-default OPNsense configuration observed
 from the router. It is an operational inventory, with dated notes for changes
@@ -125,6 +125,15 @@ filter reload and alias refresh, the `ChatGPT_WARP_DISABLED` runtime PF table
 contained the current `t0` through `t3` `gstatic.com` A/AAAA results, and the
 nested `warp_disabled` table also contained those resolved addresses.
 
+Later on 2026-07-06 at router UTC time `16:18`, `ChatGPT_WARP_DISABLED`
+was extended with `images.openai.com`. A pre-change backup was created at
+`/conf/config.xml.pre-chatgpt-warp-disabled-images-openai-20260706-161857`.
+After filter reload and alias refresh, the current `images.openai.com` A/AAAA
+results were present in both `ChatGPT_WARP_DISABLED` and nested
+`warp_disabled`. Validation-time resolved addresses were `104.18.35.200`,
+`172.64.152.56`, `2a06:98c1:3103::6812:23c8`, and
+`2a06:98c1:310c::ac40:9838`.
+
 Migration backups retained on OPNsense:
 
 ```text
@@ -138,6 +147,7 @@ ZFS snapshot: zroot@pre-fw-rules-new-20260701-115500
 /conf/codex-chatgpt-warp-exclusion-20260701-175015/
 /conf/config.xml.pre-chatgpt-warp-exclusion-20260701-175015
 /conf/config.xml.pre-chatgpt-warp-disabled-gstatic-20260705-085815
+/conf/config.xml.pre-chatgpt-warp-disabled-images-openai-20260706-161857
 ```
 
 ## Interface Inventory
@@ -433,6 +443,7 @@ ChatGPT_WARP_DISABLED (host):
   t1.gstatic.com
   t2.gstatic.com
   t3.gstatic.com
+  images.openai.com
 
 Perplexity (host):
   23.22.208.105
