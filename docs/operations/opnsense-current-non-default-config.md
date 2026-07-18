@@ -1,7 +1,7 @@
 # OPNsense Current Non-Default Configuration
 
 Date: 2026-07-01
-Last updated: 2026-07-06
+Last updated: 2026-07-18
 
 This document records the current non-default OPNsense configuration observed
 from the router. It is an operational inventory, with dated notes for changes
@@ -162,6 +162,33 @@ returned A/AAAA addresses for `chatgpt.com`, `ws.chatgpt.com`,
 `ChatGPT_WARP_DISABLED`. Existing PF states matching the populated alias
 addresses were cleared narrowly; 37 states were dropped.
 
+Later on 2026-07-18 at router UTC time `13:23` through `13:30`, a Dnsmasq
+domain override matching `taobao.com` and all of its subdomain query names was
+added to the existing Dnsmasq-managed `ChatGPT_WARP_DISABLED` external alias,
+which is nested in `warp_disabled` and already has direct IPv4/IPv6 LAN pass
+rules. The existing alias name was retained to avoid changing those firewall
+rules. A literal `*.taobao.com` entry was not written because OPNsense host
+aliases do not accept `*` in hostname labels. Unbound now forwards the
+`taobao.com` zone to Dnsmasq on `127.0.0.1:53053`. No firewall rules, NAT
+rules, WARP gateways, or interfaces were changed.
+
+After Dnsmasq, Unbound, the filter, and aliases were reloaded, clean A/AAAA
+queries for `taobao.com` and representative subdomain `www.taobao.com`
+populated 20 validation-time IPv4/IPv6 destinations. Every returned address
+was present in both `ChatGPT_WARP_DISABLED` and the nested `warp_disabled`
+runtime PF table. Dnsmasq and Unbound configuration checks passed, and both
+services were running.
+
+This remains DNS-resolved IP policy routing rather than hostname or TLS SNI
+matching. A deeper validation query for `item.taobao.com` populated its eight
+IPv4 destinations in both aliases, but the final IPv6 destinations behind its
+two-level external CNAME chain did not enter the managed alias even when the
+AAAA query was sent directly to Dnsmasq. Therefore the configured domain
+override matches wildcard subdomain queries, but complete traffic exclusion
+still depends on Dnsmasq observing and importing each answer. The broader CNAME
+target zones `alibabadns.com` and `queniuak.com` were not excluded because that
+would affect destinations beyond the requested `taobao.com` namespace.
+
 Migration backups retained on OPNsense:
 
 ```text
@@ -179,6 +206,7 @@ ZFS snapshot: zroot@pre-fw-rules-new-20260701-115500
 /conf/config.xml.pre-chatgpt-dnsmasq-managed-alias-20260706-170829
 /conf/config.xml.pre-chatgpt-dnsmasq-managed-alias-correction-20260706-171044
 /conf/config.xml.pre-chatgpt-dnsmasq-managed-alias-global-upstream-20260706-172214
+/conf/config.xml.pre-taobao-warp-disabled-20260718-132351
 ```
 
 ## Interface Inventory
@@ -305,6 +333,7 @@ Unbound:
     cdn.auth0.com -> 127.0.0.1:53053
     gstatic.com -> 127.0.0.1:53053
     images.openai.com -> 127.0.0.1:53053
+    taobao.com -> 127.0.0.1:53053
   local zone type: transparent
 
 Dnsmasq:
@@ -331,7 +360,7 @@ System upstream DNS:
 AdGuardHome remains the client-facing port-53 listener. Unbound remains on port
 5353. Dnsmasq is not the primary DNS listener for LAN clients; it is the DHCP
 server, a local DNS connector for DHCP-registered names, and the managed-alias
-resolver for the ChatGPT WARP exclusion domains forwarded by Unbound.
+resolver for the WARP exclusion domains forwarded by Unbound.
 
 ## DHCPv4 LAN
 
@@ -481,6 +510,7 @@ ChatGPT_WARP_DISABLED (external):
     cdn.auth0.com
     gstatic.com
     images.openai.com
+    taobao.com (root domain and all subdomains)
 
 Perplexity (host):
   23.22.208.105
@@ -715,10 +745,11 @@ Firewall/NAT support:
 AdGuardHome is enabled and is the observed listener on port 53. Unbound is
 enabled on port 5353 and has DNSSEC enabled. Dnsmasq listens on port 53053 as a
 local connector for DHCP-registered names and reverse zones; clients still use
-OPNsense on port 53. For ChatGPT WARP exclusions, AdGuardHome forwards to
-Unbound, Unbound forwards the managed domains to Dnsmasq, and Dnsmasq populates
-the `ChatGPT_WARP_DISABLED` external alias while using explicit Cloudflare
-upstreams from the managed include file.
+OPNsense on port 53. For managed ChatGPT and Taobao WARP exclusions,
+AdGuardHome forwards to Unbound, Unbound forwards the managed domains to
+Dnsmasq, and Dnsmasq populates the legacy-named `ChatGPT_WARP_DISABLED`
+external alias while using explicit Cloudflare upstreams from the managed
+include file.
 
 Static routes force AdGuard Family HTTPS destinations through WARP/WARP_IPV6.
 Floating firewall rules also pass those HTTPS destinations and block direct WAN
