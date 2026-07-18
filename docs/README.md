@@ -16,4 +16,5 @@ operations, and cable modem behavior.
 - [OPNsense Gateway ntfy Alert](operations/opnsense-gateway-ntfy-alert.md)
 - [OPNsense WAN Link Speed Watchdog](operations/opnsense-wan-link-speed-watchdog.md)
 - [OPNsense + Shelly Modem Watchdog](operations/opnsense-shelly-modem-watchdog.md)
+- [OPNsense High CPU from Recursive Unbound Search](operations/opnsense-high-cpu-recursive-unbound-search.md)
 - [OPNsense Current Non-Default Configuration](operations/opnsense-current-non-default-config.md)

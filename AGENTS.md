@@ -62,6 +62,39 @@ Use `python3` for Python scripts if any are added or run.
 - The Shelly can power-cycle the modem. Treat any `Switch.Set` command with
   `on=false` as an outage-causing operation.
 
+## Diagnostic Search Safety
+
+- Treat OPNsense chroot directories as mount trees, not ordinary directories.
+  In particular, `/var/unbound/dev` is a mounted `devfs` containing character
+  devices such as `random` that do not behave like finite regular files.
+- Never run an unbounded recursive search such as `grep -R /var/unbound`.
+  Recursive tools can enter `/var/unbound/dev/random`, run indefinitely, and
+  consume a full CPU core even though the search is read-only.
+- Prefer searching explicit generated configuration files. If file discovery
+  under the Unbound chroot is genuinely necessary, stay on the chroot
+  filesystem and select regular files before invoking `grep`:
+
+```sh
+find -x /var/unbound -type f \
+  -exec grep -n -I -E 'PATTERN' {} +
+```
+
+- Inspect mount boundaries before recursively searching other OPNsense chroot
+  or runtime trees. Do not rely only on `--exclude-dir=dev`; staying on one
+  filesystem and selecting `-type f` also avoids other mounted subtrees and
+  device files.
+- OPNsense root SSH commands run under `csh` by default. For compound commands
+  that use POSIX shell quoting, redirection, or control operators, explicitly
+  invoke `/bin/sh`; do not assume expressions such as `2>/dev/null` have POSIX
+  semantics in the login shell.
+- If CPU rises after a diagnostic command, check the process and its open file
+  before assuming an OPNsense service is responsible:
+
+```sh
+ps axww -o pid,ppid,user,state,%cpu,time,command -r
+procstat -f <pid>
+```
+
 ## Known Network Context
 
 Current high-level topology:

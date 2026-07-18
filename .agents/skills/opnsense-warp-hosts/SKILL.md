@@ -21,6 +21,26 @@ NAT rules.
   `Reject non-WARP LAN IPv6 internet` as part of host membership changes.
 - Verify both configured alias content and the loaded PF table after reloading.
 
+## Remote Diagnostic Searches
+
+- Never run `grep -R` or another unbounded recursive search against
+  `/var/unbound`. The Unbound chroot includes a mounted `devfs` at
+  `/var/unbound/dev`; reading a character device such as `random` can make a
+  read-only search consume a CPU core indefinitely.
+- Prefer explicit configuration files. If recursive discovery is necessary,
+  restrict it to the same filesystem and regular files:
+
+```sh
+find -x /var/unbound -type f \
+  -exec grep -n -I -E 'PATTERN' {} +
+```
+
+- Treat other OPNsense chroot and runtime trees the same way: inspect their
+  mount boundaries before recursive searches.
+- Remember that the OPNsense root SSH login shell is `csh`. Run compound
+  commands requiring POSIX quoting or redirection explicitly through
+  `/bin/sh`; keep simple validation commands as direct SSH arguments.
+
 ## Script
 
 Use `scripts/manage_warp_hosts.py` from this skill directory.

@@ -7,6 +7,9 @@ This document records the current non-default OPNsense configuration observed
 from the router. It is an operational inventory, with dated notes for changes
 that materially affect the current operating model.
 
+Related diagnostic incident:
+[OPNsense High CPU from Recursive Unbound Search](opnsense-high-cpu-recursive-unbound-search.md).
+
 Sensitive values are intentionally omitted. This includes passwords, private
 keys, pre-shared keys, certificates, license data, email/account identifiers,
 MAC addresses, and DHCPv6 DUID values.
