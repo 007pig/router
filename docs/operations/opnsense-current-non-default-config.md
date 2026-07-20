@@ -1,7 +1,7 @@
 # OPNsense Current Non-Default Configuration
 
 Date: 2026-07-01
-Last updated: 2026-07-18
+Last updated: 2026-07-20
 
 This document records the current non-default OPNsense configuration observed
 from the router. It is an operational inventory, with dated notes for changes
@@ -192,6 +192,21 @@ still depends on Dnsmasq observing and importing each answer. The broader CNAME
 target zones `alibabadns.com` and `queniuak.com` were not excluded because that
 would affect destinations beyond the requested `taobao.com` namespace.
 
+Later on 2026-07-20 at router UTC time `22:29`, Hetzner host
+`46.62.154.231` was added directly to the `warp_disabled` network alias. This
+keeps the Mac in `warp_hosts` for other destinations while routing connections
+to this host through the normal WAN instead of Cloudflare WARP. A pre-change
+backup was created at
+`/conf/config.xml.pre-warp-hosts-20260720-222916`. The configuration passed
+`xmllint`, and the filter and aliases were reloaded. The address was verified
+in the configured alias, generated alias files, and loaded `warp_disabled` PF
+table. An end-to-end `ssh hetzner` test then received the SSH banner,
+authenticated successfully, and reported the direct WAN public IPv4
+`37.228.238.194`; the corresponding PF state used WAN NAT address
+`192.168.0.150` rather than WARP address `172.16.0.2`. No WARP hosts, firewall
+rules, NAT rules, gateways, interfaces, DNS settings, or fail2ban settings were
+changed.
+
 Migration backups retained on OPNsense:
 
 ```text
@@ -210,6 +225,7 @@ ZFS snapshot: zroot@pre-fw-rules-new-20260701-115500
 /conf/config.xml.pre-chatgpt-dnsmasq-managed-alias-correction-20260706-171044
 /conf/config.xml.pre-chatgpt-dnsmasq-managed-alias-global-upstream-20260706-172214
 /conf/config.xml.pre-taobao-warp-disabled-20260718-132351
+/conf/config.xml.pre-warp-hosts-20260720-222916
 ```
 
 ## Interface Inventory
@@ -505,6 +521,7 @@ warp_disabled (network):
   Netflix
   Perplexity
   ChatGPT_WARP_DISABLED
+  46.62.154.231
 
 ChatGPT_WARP_DISABLED (external):
   expire: 86400
