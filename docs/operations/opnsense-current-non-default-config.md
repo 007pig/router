@@ -1,7 +1,7 @@
 # OPNsense Current Non-Default Configuration
 
 Date: 2026-07-01
-Last updated: 2026-07-20
+Last updated: 2026-07-23
 
 This document records the current non-default OPNsense configuration observed
 from the router. It is an operational inventory, with dated notes for changes
@@ -207,6 +207,28 @@ authenticated successfully, and reported the direct WAN public IPv4
 rules, NAT rules, gateways, interfaces, DNS settings, or fail2ban settings were
 changed.
 
+Later on 2026-07-23 at router UTC time `04:47` through `04:50`, a Dnsmasq
+domain override matching `tournamentsoftware.com` and all of its subdomain
+query names was added to the existing Dnsmasq-managed
+`ChatGPT_WARP_DISABLED` external alias. Unbound now forwards the
+`tournamentsoftware.com` zone to Dnsmasq on `127.0.0.1:53053`. As with the
+Taobao override, the root-domain zone form implements both the requested root
+domain and wildcard-subdomain behavior; a literal
+`*.tournamentsoftware.com` value was not written.
+
+A pre-change backup was created at
+`/conf/config.xml.pre-tournamentsoftware-warp-disabled-20260723-044718`.
+Dnsmasq and Unbound configuration checks passed, both services were running,
+and the generated Dnsmasq configuration contained
+`ipset=/tournamentsoftware.com/ChatGPT_WARP_DISABLED`. Validation queries for
+the root domain and `www.tournamentsoftware.com` returned IPv4
+`193.110.189.179`, which was present in both `ChatGPT_WARP_DISABLED` and the
+nested `warp_disabled` runtime PF table. Neither name had an AAAA record at
+validation time. An HTTPS request from WARP client `192.168.1.115` received the
+expected redirect, and its PF state used WAN NAT address `192.168.0.150`
+instead of WARP address `172.16.0.2`. No firewall rules, NAT rules, WARP hosts,
+gateways, or interfaces were changed.
+
 Migration backups retained on OPNsense:
 
 ```text
@@ -226,6 +248,7 @@ ZFS snapshot: zroot@pre-fw-rules-new-20260701-115500
 /conf/config.xml.pre-chatgpt-dnsmasq-managed-alias-global-upstream-20260706-172214
 /conf/config.xml.pre-taobao-warp-disabled-20260718-132351
 /conf/config.xml.pre-warp-hosts-20260720-222916
+/conf/config.xml.pre-tournamentsoftware-warp-disabled-20260723-044718
 ```
 
 ## Interface Inventory
@@ -353,6 +376,7 @@ Unbound:
     gstatic.com -> 127.0.0.1:53053
     images.openai.com -> 127.0.0.1:53053
     taobao.com -> 127.0.0.1:53053
+    tournamentsoftware.com -> 127.0.0.1:53053
   local zone type: transparent
 
 Dnsmasq:
@@ -531,6 +555,7 @@ ChatGPT_WARP_DISABLED (external):
     gstatic.com
     images.openai.com
     taobao.com (root domain and all subdomains)
+    tournamentsoftware.com (root domain and all subdomains)
 
 Perplexity (host):
   23.22.208.105
@@ -765,11 +790,11 @@ Firewall/NAT support:
 AdGuardHome is enabled and is the observed listener on port 53. Unbound is
 enabled on port 5353 and has DNSSEC enabled. Dnsmasq listens on port 53053 as a
 local connector for DHCP-registered names and reverse zones; clients still use
-OPNsense on port 53. For managed ChatGPT and Taobao WARP exclusions,
-AdGuardHome forwards to Unbound, Unbound forwards the managed domains to
-Dnsmasq, and Dnsmasq populates the legacy-named `ChatGPT_WARP_DISABLED`
-external alias while using explicit Cloudflare upstreams from the managed
-include file.
+OPNsense on port 53. For managed ChatGPT, Taobao, and Tournament Software WARP
+exclusions, AdGuardHome forwards to Unbound, Unbound forwards the managed
+domains to Dnsmasq, and Dnsmasq populates the legacy-named
+`ChatGPT_WARP_DISABLED` external alias while using explicit Cloudflare
+upstreams from the managed include file.
 
 Static routes force AdGuard Family HTTPS destinations through WARP/WARP_IPV6.
 Floating firewall rules also pass those HTTPS destinations and block direct WAN
