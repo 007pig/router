@@ -720,6 +720,17 @@ The Mac that was tested has IPv4 `192.168.1.115`, which was added to
 `fde1:c8ad:df47:4fa0:14da:ddcf:eb93:3105` were added at the same time so both
 IPv4 and IPv6 policy routing can match the client.
 
+2026-08-02 CT106 note: `192.168.1.185` and the stable ULA derived from its fixed
+guest interface, `fde1:c8ad:df47:4fa0:be24:11ff:fec8:ec4`, were temporarily
+added during a guarded WARP experiment. NAT66 through `wg1` worked after
+correcting the MTU-1280 MSS values to IPv4 1240 / IPv6 1220, but the FRP TCP
+control session to Hetzner became unstable after roughly two to three minutes.
+Backup `20260802T063901Z` was restored, so neither CT106 address appears in the
+current `warp_hosts` snapshot above. CT106 continues to use ULA plus general
+WAN NAT66 for ordinary IPv6, and its public Storj endpoint remains the Hetzner
+FRP address. Do not add the two addresses back without a new long-duration
+FRP path test and explicit rollback coverage.
+
 ## Connect Box Findings
 
 The Connect Box UI confirmed DS-Lite:

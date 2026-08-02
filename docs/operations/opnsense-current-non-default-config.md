@@ -1,7 +1,7 @@
 # OPNsense Current Non-Default Configuration
 
 Date: 2026-07-01
-Last updated: 2026-07-23
+Last updated: 2026-08-02
 
 This document records the current non-default OPNsense configuration observed
 from the router. It is an operational inventory, with dated notes for changes
@@ -32,6 +32,11 @@ timezone: Etc/UTC
 system DNS: 1.1.1.1, 1.0.0.1
 DNS override from WAN: disabled
 ```
+
+Current validation on 2026-08-02 reports `OPNsense 26.7.1_1 (amd64)` on the
+same `router.localdomain` host. The older version above remains the dated
+2026-07-01 inspection baseline rather than being rewritten as if it had been
+observed then.
 
 Configuration and runtime sources:
 
@@ -229,6 +234,45 @@ expected redirect, and its PF state used WAN NAT address `192.168.0.150`
 instead of WARP address `172.16.0.2`. No firewall rules, NAT rules, WARP hosts,
 gateways, or interfaces were changed.
 
+On 2026-08-01, Storj and Backblaze WAN egress received two production changes.
+`BACKBLAZE_NETWORKS` was created with the five Backblaze-published data-center
+ranges `206.190.208.0/21`, `104.153.232.0/21`, `149.137.128.0/20`,
+`45.11.36.0/22`, and `2605:72c0::/32`; it is nested in `warp_disabled`.
+LAN quick-pass sequences `67/68` send `warp_hosts -> BACKBLAZE_NETWORKS` over
+the default IPv4/IPv6 gateway before WARP sequences `71+`. No
+`backblaze.com` Dnsmasq domain override was added, avoiding accidental bypass
+for web/CDN addresses shared through Cloudflare. A representative Backblaze
+data connection was observed on `igc0` and not `wg1`.
+
+The same transaction added active WAN-out shaping without changing the two old
+pipes or three disabled rules: pipe `10002` is 45 Mbit/s FQ-CoDel, queue
+`20002` is its child, and sequences `10/20` match IPv4/IPv6 on WAN `out`.
+FQ-CoDel uses target 5 ms, interval 100 ms, quantum 1500, limit 1000, flows
+1024, and ECN. Backup/rollback ID: `20260801T160744Z`. The official
+`os-zabbix7-agent 1.19` / `zabbix7-agent 7.0.28` was also installed with
+deployment ID `20260801T162624Z`: it listens only on `192.168.1.1:10050`,
+accepts the Zabbix Mac through PSK, runs with `AllowRoot=0`, denies
+`system.run[*]`, and has a LAN rule blocking other sources. Secrets and PSK
+values are not recorded here.
+
+On 2026-08-02, a guarded experiment attempted to add Storj CT106 IPv4
+`192.168.1.185` and its stable EUI-64-derived ULA
+`fde1:c8ad:df47:4fa0:be24:11ff:fec8:ec4` to `warp_hosts`, plus source-specific
+sequence `69` to override the global Hetzner exception only for CT106. The
+experiment also established that `wg1` MTU 1280 requires IPv4 MSS 1240 and
+IPv6 MSS 1220; the previous family-agnostic legacy scrub at 1240 caused Linux
+IPv6 TLS retransmission. With family-specific MSS, both Cloudflare traces
+reported `warp=on`.
+
+The target was not retained: FRP initially logged in through WARP but its
+long-lived control session closed after roughly two to three minutes, followed
+by repeated ten-second timeouts to Hetzner port 7000 while short HTTPS traces
+still worked. Backup `20260802T063901Z` was restored. CT106 is therefore not a
+current `warp_hosts` member, sequence `69` is absent, the original legacy MSS
+configuration is restored, and CT106 FRP again uses WAN `igc0`. Hetzner remains
+globally nested in `warp_disabled`; macOS, SSH, TeamTalk, and Backblaze behavior
+is unchanged. Do not document or monitor the failed WARP target as production.
+
 Migration backups retained on OPNsense:
 
 ```text
@@ -249,6 +293,9 @@ ZFS snapshot: zroot@pre-fw-rules-new-20260701-115500
 /conf/config.xml.pre-taobao-warp-disabled-20260718-132351
 /conf/config.xml.pre-warp-hosts-20260720-222916
 /conf/config.xml.pre-tournamentsoftware-warp-disabled-20260723-044718
+/conf/backup/codex-storj-wan/20260801T160744Z/
+/conf/backup/codex-zabbix-agent/20260801T162624Z/
+/conf/backup/codex-storj-warp/20260802T063901Z/ (failed target, restored)
 ```
 
 ## Interface Inventory
@@ -546,6 +593,14 @@ warp_disabled (network):
   Perplexity
   ChatGPT_WARP_DISABLED
   46.62.154.231
+  BACKBLAZE_NETWORKS
+
+BACKBLAZE_NETWORKS (network):
+  206.190.208.0/21
+  104.153.232.0/21
+  149.137.128.0/20
+  45.11.36.0/22
+  2605:72c0::/32
 
 ChatGPT_WARP_DISABLED (external):
   expire: 86400
@@ -619,6 +674,8 @@ WAN:
 LAN:
   pass warp_hosts to ChatGPT_WARP_DISABLED without WARP IPv4 gateway
   pass warp_hosts to ChatGPT_WARP_DISABLED without WARP IPv6 gateway
+  pass warp_hosts to BACKBLAZE_NETWORKS without WARP IPv4 gateway (sequence 67)
+  pass warp_hosts to BACKBLAZE_NETWORKS without WARP IPv6 gateway (sequence 68)
   pass warp_hosts to !warp_disabled via WARP IPv4 gateway
   pass warp_hosts UDP/443 to !warp_disabled via WARP IPv4 gateway
   pass warp_hosts UDP/80 to !warp_disabled via WARP IPv4 gateway
@@ -846,9 +903,28 @@ pipe 10001:
   bandwidth: 80 Mbit
   mask: dst-ip
   description: PipeDown-CharlesPC-80Mbps
+
+pipe 10002:
+  enabled: yes
+  bandwidth: 45 Mbit/s
+  mask: none
+  scheduler: FQ-CoDel
+  target: 5 ms
+  interval: 100 ms
+  quantum: 1500
+  limit: 1000
+  flows: 1024
+  ECN: enabled
+  description: WAN upload 45Mbps FQ-CoDel
+
+queue 20002:
+  enabled: yes
+  pipe: 10002
+  weight: 100
+  mask: none
 ```
 
-All three configured Traffic Shaper rules were disabled at inspection time:
+The three historical Traffic Shaper rules remain disabled:
 
 ```text
 sequence 1: disabled, LAN IPv6 destination 2606:4700:110:89ed::1b52 -> PipeDown
@@ -856,8 +932,16 @@ sequence 2: disabled, WAN IPv4 destination 192.168.1.208 -> PipeDown
 sequence 3: disabled, WAN IPv4 destination 192.168.1.29 -> PipeDown-CharlesPC-80Mbps
 ```
 
-The pipes exist, but the current snapshot does not show active shaping rules
-using them.
+Two additional production rules are active:
+
+```text
+sequence 10: enabled, WAN IPv4 direction out, any -> any, queue 20002
+sequence 20: enabled, WAN IPv6 direction out, any -> any, queue 20002
+```
+
+Runtime `configctl shaper stats` confirms pipe `10002`, queue `20002`, both
+rules, 45 Mbit/s, and FQ-CoDel. Do not enable, remove, or repurpose the old
+`10000/10001` objects as part of Storj tuning.
 
 ## Management Plane
 
@@ -1043,8 +1127,8 @@ Configuration items worth revisiting before future cleanup:
    complete.
 5. After LAN clients renew leases from Dnsmasq, verify DHCPv4/v6 lease
    registration, especially DHCPv6 AAAA records for static reservations.
-6. Traffic Shaper pipes exist but all matching rules are disabled; decide
-   whether those limits should be kept, removed, or re-enabled.
+6. Keep the active 45 Mbit/s FQ-CoDel baseline while monitoring WAN utilization,
+   loss, and RTT; do not increase it merely because short tests exceed 45 Mbit/s.
 7. SSH root login and password authentication are enabled; keep only if this is
    intentional for the local operational model.
 
