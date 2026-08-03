@@ -236,6 +236,14 @@ warp_hosts:
 Old `2a02:8084:2001:6620::*` WARP IPv6 entries were removed from
 `warp_hosts`. The IPv4 WARP entries were preserved.
 
+As of 2026-08-03, CT106 Storj (`192.168.1.185` and its stable ULA) is not in
+`warp_hosts`: the 2026-08-02 WARP experiment was rolled back because its FRP
+long-lived TCP session became unstable. CT106-to-Hetzner FRP remains direct via
+WAN `igc0`; the public Storj endpoint remains on Hetzner. Backblaze data-center
+networks remain nested in `warp_disabled` and use the sequence 67/68 default-
+gateway bypass. WAN upload class isolation is now handled separately by the
+45 Mbit/s WF2Q+ shaper (FRP/default/Backblaze weights 100/50/20).
+
 Important WARP follow-up: the ULA WARP entries above are reserved intended
 addresses. Devices at `192.168.1.208` and `192.168.1.218` were not confirmed
 online during the migration. If those devices only use SLAAC and do not take the

@@ -269,6 +269,57 @@ shared IPv4/IPv6 WAN-out rules. Runtime and basic IPv4/IPv6 connectivity checks
 passed after reload. Pre-change rollback file:
 `/conf/config.xml.pre-wan-shaper-35-20260803T062327Z`.
 
+Later on 2026-08-03, sustained-load testing showed that 35 Mbit/s was still far
+above the safe ceiling. Reducing pipe `10002` to 25 Mbit/s also failed when WAN
+egress reached about 24 Mbit/s: a simultaneous 60-second test measured 38.3%
+loss from the DHCPv6 WAN address and 35% loss from the SLAAC WAN address, while
+IPv4 remained at 0% loss. At 18 Mbit/s, measured WAN egress averaged 17.81
+Mbit/s and the six native-IPv6 source/target combinations lost 15-35% of their
+packets; IPv4 again lost 0%. At 15 Mbit/s, Backblaze initially held WAN egress
+near 14-14.7 Mbit/s and `WAN_DHCP6` remained offline with up to 76% rolling
+loss. When Backblaze stopped transmitting during the same test, the gateway
+recovered to 0% loss without an address, route, interface, or DHCPv6 change.
+This same-session loaded/unloaded comparison confirms shared DOCSIS-upstream
+congestion rather than a stale DHCPv6 lease or a dpinger-only false positive.
+
+Pipe `10002` is therefore provisionally set to 12 Mbit/s. A five-minute
+low-load validation averaged only 1.25 Mbit/s WAN egress and completed 300
+probes for each of DHCPv6/SLAAC to Cloudflare, Google, and Quad9, plus 300 IPv4
+probes, all with 0% loss. Backblaze had no active `149.137.0.0/16` state during
+that run, so 12 Mbit/s has not yet passed a sustained Backblaze full-load test
+and must not be described as the final maximum safe ceiling. Retained
+pre-change rollback files for the successive trials are:
+
+```text
+/conf/config.xml.pre-wan-shaper-25-20260803T122057Z
+/conf/config.xml.pre-wan-shaper-18-20260803T123123Z
+/conf/config.xml.pre-wan-shaper-15-20260803T123733Z
+/conf/config.xml.pre-wan-shaper-12-20260803T124406Z
+```
+
+Later on 2026-08-03, the provisional 12 Mbit/s experiment was retained as the
+pre-change record above, but production moved to user-selected 45 Mbit/s class
+isolation. Pipe `10002` now uses WF2Q+ with default/FRP/Backblaze queues
+`20002/20003/20004`, weights `50/100/20`, and independent CoDel target 5 ms,
+interval 100 ms, ECN. WAN-out rules are ordered FRP TCP to
+`46.62.154.231:7000`, Backblaze IPv4, Backblaze IPv6, default IPv4, default
+IPv6. With `net.inet.ip.fw.one_pass=1`, each packet enters only the first
+matching class. The change is weighted sharing, not a Backblaze hard cap.
+
+The transaction backup ID is `20260803T152217Z`; rollback through the PVE
+repository's `configure-opnsense-storj-wan.sh` restores 12 Mbit/s FQ-CoDel but
+removes class isolation. The user explicitly selected keeping 45 Mbit/s even if
+sustained load again causes native-IPv6 loss or HTTPS timeout. This is not a
+proven DOCSIS safe ceiling: WAN_DHCP6 loss/offline monitoring and alerts remain
+enabled, and the deployment must not auto-reduce the rate or hide the problem.
+The final no-change observation ran from `2026-08-03T15:59:33Z` through
+`17:29:33Z` and passed 91/91 one-minute samples. FRP reconnect, pool-full,
+remote work timeout, and class drops remained zero; public TCP, QUIC,
+Dashboard, shaper, and the IPv6 gateway remained available. One DHCPv6 sample
+reported 1% loss and then recovered. Backblaze produced only brief natural
+traffic (about 1.46 Mbit/s peak), not the required 15-minute sustained window,
+so weighted behavior under continuous class contention remains a follow-up.
+
 On 2026-08-02, a guarded experiment attempted to add Storj CT106 IPv4
 `192.168.1.185` and its stable EUI-64-derived ULA
 `fde1:c8ad:df47:4fa0:be24:11ff:fec8:ec4` to `warp_hosts`, plus source-specific
@@ -920,22 +971,21 @@ pipe 10001:
 
 pipe 10002:
   enabled: yes
-  bandwidth: 35 Mbit/s
+  bandwidth: 45 Mbit/s
   mask: none
-  scheduler: FQ-CoDel
-  target: 5 ms
-  interval: 100 ms
-  quantum: 1500
-  limit: 1000
-  flows: 1024
-  ECN: enabled
-  description: WAN upload 35Mbps FQ-CoDel
+  scheduler: WF2Q+
+  description: WAN upload 45Mbps WF2Q+
 
 queue 20002:
   enabled: yes
   pipe: 10002
-  weight: 100
+  weight: 50
   mask: none
+  AQM: CoDel target 5 ms, interval 100 ms, ECN
+  description: WAN default CoDel class
+
+queue 20003: pipe 10002, weight 100, CoDel 5/100 ms ECN, WAN FRP CoDel class
+queue 20004: pipe 10002, weight 20, CoDel 5/100 ms ECN, WAN Backblaze CoDel class
 ```
 
 The three historical Traffic Shaper rules remain disabled:
@@ -946,15 +996,18 @@ sequence 2: disabled, WAN IPv4 destination 192.168.1.208 -> PipeDown
 sequence 3: disabled, WAN IPv4 destination 192.168.1.29 -> PipeDown-CharlesPC-80Mbps
 ```
 
-Two additional production rules are active:
+Five production WAN-out rules are active:
 
 ```text
-sequence 10: enabled, WAN IPv4 direction out, any -> any, queue 20002
-sequence 20: enabled, WAN IPv6 direction out, any -> any, queue 20002
+sequence 10: IPv4 TCP, destination 46.62.154.231 port 7000 -> queue 20003
+sequence 20: IPv4, destination Backblaze four IPv4 networks -> queue 20004
+sequence 30: IPv6, destination 2605:72c0::/32 -> queue 20004
+sequence 40: IPv4 any -> any -> queue 20002
+sequence 50: IPv6 any -> any -> queue 20002
 ```
 
-Runtime `configctl shaper stats` confirms pipe `10002`, queue `20002`, both
-rules, 35 Mbit/s, and FQ-CoDel. Do not enable, remove, or repurpose the old
+Runtime confirms pipe `10002`, all three queues, five rules, 45 Mbit/s, WF2Q+,
+weights and CoDel/ECN. Do not enable, remove, or repurpose the old
 `10000/10001` objects as part of Storj tuning.
 
 ## Management Plane
@@ -1141,10 +1194,10 @@ Configuration items worth revisiting before future cleanup:
    complete.
 5. After LAN clients renew leases from Dnsmasq, verify DHCPv4/v6 lease
    registration, especially DHCPv6 AAAA records for static reservations.
-6. Keep the active 35 Mbit/s FQ-CoDel baseline while validating sustained
-   Backblaze/Storj upload, gateway loss, and RTT. Only test a higher ceiling in
-   small increments after a clean sustained-load run; do not infer safe capacity
-   from a short upload-speed result.
+6. Keep the user-selected 45 Mbit/s WF2Q+ isolation topology and monitor class
+   bps/backlog/drops plus IPv4 and WAN_DHCP6 loss/RTT. If native IPv6 loss or
+   HTTPS timeout returns, keep the production alert active and record it; do not
+   auto-reduce the cap or describe 45 Mbit/s as a proven safe ceiling.
 7. SSH root login and password authentication are enabled; keep only if this is
    intentional for the local operational model.
 
