@@ -1,7 +1,7 @@
 # OPNsense Current Non-Default Configuration
 
 Date: 2026-07-01
-Last updated: 2026-08-02
+Last updated: 2026-08-03
 
 This document records the current non-default OPNsense configuration observed
 from the router. It is an operational inventory, with dated notes for changes
@@ -254,6 +254,20 @@ deployment ID `20260801T162624Z`: it listens only on `192.168.1.1:10050`,
 accepts the Zabbix Mac through PSK, runs with `AllowRoot=0`, denies
 `system.run[*]`, and has a LAN rule blocking other sources. Secrets and PSK
 values are not recorded here.
+
+On 2026-08-03, a sustained Backblaze upload from `192.168.1.115` exposed that
+the 45 Mbit/s WAN-out ceiling was still above the reliably available DOCSIS
+upstream capacity. LAN ingress reached about 44.8 Mbit/s with a 51.6 Mbit/s
+peak while `WAN_DHCP6` repeatedly reported loss/down. Multi-target probes from
+the WAN DHCPv6 address showed 40–41.1% loss to the configured Cloudflare
+monitor and 6.7–11.7% loss to Google/Quad9, with real IPv6 HTTPS timeouts.
+Pausing Backblaze reduced WAN egress to about 0.5 Mbit/s; `WAN_DHCP6` recovered
+at `2026-08-03T06:11:13Z`, and 540 dual-source/multi-target IPv6 probes plus 20
+HTTPS requests completed without loss or timeout. Pipe `10002` was therefore
+reduced from 45 to 35 Mbit/s while preserving its FQ-CoDel parameters and the
+shared IPv4/IPv6 WAN-out rules. Runtime and basic IPv4/IPv6 connectivity checks
+passed after reload. Pre-change rollback file:
+`/conf/config.xml.pre-wan-shaper-35-20260803T062327Z`.
 
 On 2026-08-02, a guarded experiment attempted to add Storj CT106 IPv4
 `192.168.1.185` and its stable EUI-64-derived ULA
@@ -906,7 +920,7 @@ pipe 10001:
 
 pipe 10002:
   enabled: yes
-  bandwidth: 45 Mbit/s
+  bandwidth: 35 Mbit/s
   mask: none
   scheduler: FQ-CoDel
   target: 5 ms
@@ -915,7 +929,7 @@ pipe 10002:
   limit: 1000
   flows: 1024
   ECN: enabled
-  description: WAN upload 45Mbps FQ-CoDel
+  description: WAN upload 35Mbps FQ-CoDel
 
 queue 20002:
   enabled: yes
@@ -940,7 +954,7 @@ sequence 20: enabled, WAN IPv6 direction out, any -> any, queue 20002
 ```
 
 Runtime `configctl shaper stats` confirms pipe `10002`, queue `20002`, both
-rules, 45 Mbit/s, and FQ-CoDel. Do not enable, remove, or repurpose the old
+rules, 35 Mbit/s, and FQ-CoDel. Do not enable, remove, or repurpose the old
 `10000/10001` objects as part of Storj tuning.
 
 ## Management Plane
@@ -1127,8 +1141,10 @@ Configuration items worth revisiting before future cleanup:
    complete.
 5. After LAN clients renew leases from Dnsmasq, verify DHCPv4/v6 lease
    registration, especially DHCPv6 AAAA records for static reservations.
-6. Keep the active 45 Mbit/s FQ-CoDel baseline while monitoring WAN utilization,
-   loss, and RTT; do not increase it merely because short tests exceed 45 Mbit/s.
+6. Keep the active 35 Mbit/s FQ-CoDel baseline while validating sustained
+   Backblaze/Storj upload, gateway loss, and RTT. Only test a higher ceiling in
+   small increments after a clean sustained-load run; do not infer safe capacity
+   from a short upload-speed result.
 7. SSH root login and password authentication are enabled; keep only if this is
    intentional for the local operational model.
 
