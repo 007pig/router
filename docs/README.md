@@ -18,3 +18,5 @@ operations, and cable modem behavior.
 - [OPNsense + Shelly Modem Watchdog](operations/opnsense-shelly-modem-watchdog.md)
 - [OPNsense High CPU from Recursive Unbound Search](operations/opnsense-high-cpu-recursive-unbound-search.md)
 - [OPNsense Current Non-Default Configuration](operations/opnsense-current-non-default-config.md)
+
+- [tank1 NAS LAN / Tailscale access](operations/tank1-nas-lan-tailscale.md)
