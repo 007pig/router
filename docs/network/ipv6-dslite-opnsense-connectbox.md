@@ -1,7 +1,7 @@
 # OPNsense IPv6 over DS-Lite with Connect Box
 
 Date: 2026-06-30
-Last updated: 2026-07-01
+Last updated: 2026-09-22
 
 This document records the IPv6 investigation for the OPNsense router behind a
 Virgin/UPC-style Connect Box cable modem using DS-Lite. It summarizes the
@@ -46,6 +46,49 @@ Current operating model as of 2026-07-01:
 
 Current full non-default OPNsense configuration inventory:
 [OPNsense Current Non-Default Configuration](../operations/opnsense-current-non-default-config.md).
+
+## Mac Wi-Fi Reservation Moved to LAN Bridge (2026-09-22)
+
+At the user's request, `Xiaoyus-MBP` now uses macOS `Lan bridge`
+(`bridge1`, members `en25` and `en8`) in place of disabled Wi-Fi `en0`.
+
+- Moved the Dnsmasq IPv4 reservation `192.168.1.115` from Wi-Fi MAC
+  `5c:e9:1e:7e:9d:b1` to bridge MAC `6c:6e:07:43:18:7b`.
+- Kept the DHCPv6 reservation `fde1:c8ad:df47:4fa0::1e35`. macOS uses the
+  same DUID across these interfaces; bridge uses IAID 3, while Wi-Fi used 0.
+  The old Wi-Fi lease still occupied the reserved IPv6 address, so bridge
+  initially received `fde1:c8ad:df47:4fa0::10f5`.
+- Backed up the lease file and removed only this Mac's four old lease records
+  (`192.168.1.115`, `192.168.1.143`, `::1e35`, and `::10f5`) while Dnsmasq
+  was stopped. Restarted Dnsmasq with the new reservation, then briefly
+  disabled/re-enabled the macOS network service to renew both protocols.
+- Replaced Wi-Fi SLAAC address `fde1:c8ad:df47:4fa0:14da:ddcf:eb93:3105`
+  in `warp_hosts` with bridge SLAAC address
+  `fde1:c8ad:df47:4fa0:1c31:3655:9694:a5e2`. Reserved IPv4 and DHCPv6
+  addresses remain in the alias.
+
+Verification: client DHCP ACK/REPLY and router leases agree on
+`192.168.1.115/24` and `fde1:c8ad:df47:4fa0::1e35/64` on `bridge1`.
+Dnsmasq configuration syntax passed; service was running. The loaded PF
+table contains the bridge addresses and no longer contains the Wi-Fi SLAAC
+address. Cloudflare HTTPS trace from each of the three bridge source
+addresses succeeded with `warp=on`. Router DNS resolves
+`Xiaoyus-MBP.localdomain` A/AAAA to the reserved addresses.
+
+Backups on OPNsense:
+
+```text
+/conf/config.xml.pre-mac-lan-bridge-20260922-193355
+/conf/dnsmasq.leases.pre-mac-lan-bridge-20260922
+/conf/config.xml.pre-warp-hosts-20260922-193416
+/conf/config.xml.pre-warp-hosts-20260922-193558
+```
+
+For a future targeted reversal, restore the IPv4 reservation's Wi-Fi MAC,
+replace the bridge SLAAC alias entry with Wi-Fi's then-current address, and
+renew leases on the intended interface. The DUID is shared, so do not assume
+both interfaces can receive the single reserved IPv6 address simultaneously.
+The older Wi-Fi client observations below are historical.
 
 ## Current State: Full LAN ULA-only + NAT66
 
