@@ -74,6 +74,11 @@ Automation：`automation.porsche_wake_scheduler`，每分钟做一次本地检�
 
 日志入口：专用面板中的 `sensor.porsche_wake_result`、automation 的“跟踪”、以及 `/config/porsche_wake_audit.jsonl`。HA Recorder 保留 30 天（原默认配置未设置更长期限），automation 保留最近 100 条 trace；脱敏 JSONL 审计文件持续保留，不自动清理。trace 可能被每分钟调度覆盖，长期证据以审计文件为准。
 
+“Porsche 唤醒结果”在面板中显示中文说明，例如“已查看车辆缓存，未发送唤醒请求”、
+“正在请求车辆实时状态”“车辆正在正常充电，本次已跳过”。原始状态码保留在实体属性
+`result_code` 及 JSONL 日志的 `result` 字段中；旧历史记录不改写。“实时查询调用成功”
+仍明确标注车辆响应待核实，不将服务调用成功等同于车辆唤醒或恢复充电。
+
 `porsche_wake_guard.inspect` 只记录缓存诊断，不访问 Porsche。`porsche_wake_guard.resume` 在重新认证后解除认证暂停，但不清除每日次数、限流冷却或去重历史。
 
 结果必须分层理解：

@@ -22,6 +22,32 @@ from homeassistant.exceptions import HomeAssistantError
 from .policy import ZONE, decide, slot_key
 
 DOMAIN = "porsche_wake_guard"
+RESULT_LABELS = {
+    "ready_disabled_until_configured": "唤醒保护已就绪",
+    "inspection_no_request": "已查看车辆缓存，未发送唤醒请求",
+    "request_started": "正在请求车辆实时状态",
+    "service_returned_success": "实时查询调用成功，车辆响应待核实",
+    "observation": "已记录请求后的车辆状态",
+    "observation_cancelled": "总开关已关闭，后续观察已停止",
+    "cached_read_success": "已读取云端缓存，未额外唤醒车辆",
+    "cached_read_failed": "云端缓存读取失败，后续唤醒已暂停",
+    "one_off_scheduled": "已安排一次性唤醒请求",
+    "authentication_hold_cleared": "认证暂停已解除，等待下一次计划",
+    "authentication_required": "登录认证失效，请重新登录 Porsche",
+    "rate_limited": "Porsche 服务限流，后续请求已暂停",
+    "timeout_unknown": "请求超时，是否送达车辆尚不确定",
+    "request_failed_unknown": "请求失败，车辆响应尚不确定",
+    "interrupted_request_unknown": "请求被重启中断，结果未知，已暂停 24 小时",
+    "previous_request_unknown": "上次请求结果尚未确认，本次已跳过",
+    "failure_cooldown": "故障或限流冷却中，本次已跳过",
+    "minimum_interval": "尚未达到最小请求间隔，本次已跳过",
+    "daily_limit": "已达到今日请求上限，本次已跳过",
+    "button_unavailable": "车辆实时查询按钮不可用，本次已跳过",
+    "unplugged": "车辆未连接充电设备，本次已跳过",
+    "target_reached": "车辆已达到目标电量，本次已跳过",
+    "already_charging": "车辆正在正常充电，本次已跳过",
+    "duplicate": "该时刻已处理，本次不重复执行",
+}
 REQUEST_FAILURES = ContextVar("porsche_wake_failures", default=None)
 CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Schema({})}, extra=vol.ALLOW_EXTRA)
 
@@ -136,7 +162,9 @@ class Guard:
         sample = attrs.get("snapshot") or attrs.get("after") or attrs.get("before")
         if sample:
             self.publish_power(sample)
-        self.hass.states.async_set("sensor.porsche_wake_result", result, {
+        label = RESULT_LABELS.get(result, "未识别的执行结果，请查看状态代码")
+        self.hass.states.async_set("sensor.porsche_wake_result", label, {
+            "result_code": result,
             "friendly_name": "Porsche 唤醒结果", "last_recorded": datetime.now(timezone.utc).isoformat(),
             "today_attempts": self.ledger.get("count", 0),
             "one_off_local": self.ledger.get("one_off"),
