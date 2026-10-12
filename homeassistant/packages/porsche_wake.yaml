@@ -1,0 +1,145 @@
+{
+  "porsche_wake_guard": {},
+  "input_boolean": {
+    "porsche_wake_enabled": {
+      "name": "Porsche 定时唤醒总开关",
+      "icon": "mdi:car-clock"
+    },
+    "porsche_wake_slot_1": {
+      "name": "启用唤醒时段 1"
+    },
+    "porsche_wake_slot_2": {
+      "name": "启用唤醒时段 2"
+    },
+    "porsche_wake_slot_3": {
+      "name": "启用唤醒时段 3"
+    },
+    "porsche_wake_slot_4": {
+      "name": "启用唤醒时段 4"
+    },
+    "porsche_wake_slot_5": {
+      "name": "启用唤醒时段 5"
+    }
+  },
+  "input_datetime": {
+    "porsche_wake_time_1": {
+      "name": "唤醒时间 1（Dublin）",
+      "has_date": false,
+      "has_time": true
+    },
+    "porsche_wake_time_2": {
+      "name": "唤醒时间 2（Dublin）",
+      "has_date": false,
+      "has_time": true
+    },
+    "porsche_wake_time_3": {
+      "name": "唤醒时间 3（Dublin）",
+      "has_date": false,
+      "has_time": true
+    },
+    "porsche_wake_time_4": {
+      "name": "唤醒时间 4（Dublin）",
+      "has_date": false,
+      "has_time": true
+    },
+    "porsche_wake_time_5": {
+      "name": "唤醒时间 5（Dublin）",
+      "has_date": false,
+      "has_time": true
+    }
+  },
+  "input_number": {
+    "porsche_wake_target_soc": {
+      "name": "本地目标电量（不写入车辆）",
+      "min": 1,
+      "max": 100,
+      "step": 1,
+      "mode": "box"
+    },
+    "porsche_wake_interval_minutes": {
+      "name": "请求最小间隔（分钟）",
+      "min": 60,
+      "max": 1440,
+      "step": 1,
+      "mode": "box"
+    },
+    "porsche_wake_daily_limit": {
+      "name": "每日请求上限",
+      "min": 1,
+      "max": 5,
+      "step": 1,
+      "mode": "box"
+    }
+  },
+  "input_text": {
+    "porsche_wake_button_entity": {
+      "name": "实时查询按钮",
+      "max": 255
+    },
+    "porsche_wake_soc_entity": {
+      "name": "电量传感器",
+      "max": 255
+    },
+    "porsche_wake_plugged_entity": {
+      "name": "插枪二值传感器",
+      "max": 255
+    },
+    "porsche_wake_charging_entity": {
+      "name": "充电状态传感器",
+      "max": 255
+    },
+    "porsche_wake_power_entity": {
+      "name": "充电功率传感器（kW）",
+      "max": 255
+    },
+    "porsche_wake_timestamp_entity": {
+      "name": "车辆测量时间戳传感器（不是 HA 更新时间）",
+      "max": 255
+    }
+  },
+  "automation": [
+    {
+      "id": "porsche_wake_scheduler",
+      "alias": "Porsche wake scheduler",
+      "description": "本地调度；通过持久化保护调用实时查询 button.press。总开关默认关闭。",
+      "triggers": [
+        {
+          "trigger": "time_pattern",
+          "minutes": "/1"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "state",
+          "entity_id": "input_boolean.porsche_wake_enabled",
+          "state": "on"
+        }
+      ],
+      "actions": [
+        {
+          "action": "porsche_wake_guard.run"
+        }
+      ],
+      "mode": "single",
+      "max_exceeded": "silent",
+      "trace": {
+        "stored_traces": 100
+      }
+    }
+  ],
+  "script": {
+    "porsche_wake_manual_test": {
+      "alias": "Porsche 受限手动唤醒测试",
+      "mode": "single",
+      "sequence": [
+        {
+          "action": "porsche_wake_guard.run",
+          "data": {
+            "manual": true
+          }
+        }
+      ],
+      "description": "计入每日请求上限，遵守总开关和冷却时间。"
+    }
+  }
+}

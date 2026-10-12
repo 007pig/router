@@ -1,0 +1,79 @@
+{
+  "title": "Porsche 唤醒试验",
+  "views": [
+    {
+      "title": "Cayenne",
+      "path": "cayenne",
+      "cards": [
+        {
+          "type": "markdown",
+          "content": "## Cayenne 唤醒试验\n时区 Europe/Dublin。只发送实时概览查询，不修改 Departure Timer 或 Direct Charging。\n\n**服务调用成功 ≠ 车辆响应 ≠ 恢复充电。** 首次完成 Porsche 认证、核对实体后再启用总开关。时间按分钟执行，重启不补发。"
+        },
+        {
+          "type": "entities",
+          "title": "运行与限制",
+          "entities": [
+            "input_boolean.porsche_wake_enabled",
+            "automation.porsche_wake_scheduler",
+            "sensor.porsche_wake_result",
+            "input_number.porsche_wake_target_soc",
+            "input_number.porsche_wake_interval_minutes",
+            "input_number.porsche_wake_daily_limit",
+            "script.porsche_wake_manual_test"
+          ]
+        },
+        {
+          "type": "entities",
+          "title": "车辆状态（云端测量）",
+          "entities": [
+            "sensor.cayenne_s_e_hybrid_my24_state_of_charge",
+            "sensor.cayenne_s_e_hybrid_my24_charging_status",
+            "sensor.porsche_wake_vehicle_power",
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_result",
+              "attribute": "one_off_local",
+              "name": "一次性请求例外"
+            }
+          ]
+        },
+        {
+          "type": "entities",
+          "title": "每天的本地时间",
+          "entities": [
+            "input_boolean.porsche_wake_slot_1",
+            "input_datetime.porsche_wake_time_1",
+            "input_boolean.porsche_wake_slot_2",
+            "input_datetime.porsche_wake_time_2",
+            "input_boolean.porsche_wake_slot_3",
+            "input_datetime.porsche_wake_time_3",
+            "input_boolean.porsche_wake_slot_4",
+            "input_datetime.porsche_wake_time_4",
+            "input_boolean.porsche_wake_slot_5",
+            "input_datetime.porsche_wake_time_5"
+          ]
+        },
+        {
+          "type": "entities",
+          "title": "车辆实体映射（首次配置）",
+          "entities": [
+            "input_text.porsche_wake_button_entity",
+            "input_text.porsche_wake_soc_entity",
+            "input_text.porsche_wake_plugged_entity",
+            "input_text.porsche_wake_charging_entity",
+            "input_text.porsche_wake_power_entity",
+            "input_text.porsche_wake_timestamp_entity"
+          ]
+        },
+        {
+          "type": "history-graph",
+          "title": "请求结果（24 小时）",
+          "hours_to_show": 24,
+          "entities": [
+            "sensor.porsche_wake_result"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -13,6 +13,8 @@ operations, and cable modem behavior.
 
 ## Operations
 
+- [Home Assistant / Porsche Cayenne 定时唤醒试验](operations/home-assistant-porsche-wake.md)
+
 - [OPNsense Gateway ntfy Alert](operations/opnsense-gateway-ntfy-alert.md)
 - [OPNsense WAN Link Speed Watchdog](operations/opnsense-wan-link-speed-watchdog.md)
 - [OPNsense + Shelly Modem Watchdog](operations/opnsense-shelly-modem-watchdog.md)

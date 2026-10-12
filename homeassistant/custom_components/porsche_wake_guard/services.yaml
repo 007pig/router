@@ -1,0 +1,24 @@
+run:
+  name: Check scheduled wake request
+  description: Evaluate the current local time and apply persistent request limits.
+  fields:
+    manual:
+      name: Manual test
+      description: Ignore scheduled times only; all safety limits and the master switch still apply.
+      selector:
+        boolean:
+resume:
+  name: Resume after checking authentication
+  description: Clear the authentication hold after reauthentication. Does not clear rate limits, pending requests or request history.
+inspect:
+  name: Inspect cached wake evidence
+  description: Record sanitized cached charging data and measurement field names without sending any request to Porsche.
+request_once_at:
+  name: One-off scheduled request exception
+  description: For one local date/time within 24 hours, use a 60-minute floor and ignore optional charging skips. Keeps daily cap, deduplication, authentication and rate-limit holds. The time must also be enabled in the schedule.
+  fields:
+    slot:
+      required: true
+      example: "2026-10-12|07:00"
+      selector:
+        text:
