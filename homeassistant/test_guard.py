@@ -185,5 +185,103 @@ class GuardTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(g.retry_deadline(caught.exception,100),172900)
         finally:g.REQUEST_FAILURES.reset(token)
 
+    async def test_resume_observation_skips_past_nodes_without_wake(self):
+        calls=[]
+        async def cached():calls.append('cached')
+        self.guard.vehicle=types.SimpleNamespace(get_stored_overview=cached,connection=types.SimpleNamespace(asyncClient=types.SimpleNamespace(event_hooks={'response':[]})))
+        self.guard.coordinator=types.SimpleNamespace(async_update_listeners=lambda:None)
+        self.guard.ledger['observation']={'slot':'2026-10-13|03:00','before':{},'started':g.time.time()-300,'cursor':0,'button':'button.cayenne_get_current_overview'}
+        async def no_sleep(*a):pass
+        with patch.object(g.asyncio,'sleep',no_sleep):await self.guard.resume_observation()
+        self.assertEqual(self.guard.calls,[])
+        self.assertEqual(calls,['cached'])
+        self.assertEqual(self.guard.records.count('observation_node_missed'),2)
+        self.assertNotIn('observation',self.guard.ledger)
+
+    async def test_cancel_observation_sends_no_cached_request(self):
+        self.guard.ledger['observation']={'slot':'2026-10-13|03:00','before':{},'started':g.time.time(),'cursor':0,'button':'button.cayenne_get_current_overview'}
+        self.guard.value=lambda key:'off'
+        async def no_sleep(*a):pass
+        with patch.object(g.asyncio,'sleep',no_sleep):await self.guard.observe()
+        self.assertIn('observation_cancelled',self.guard.records)
+        self.assertNotIn('observation',self.guard.ledger)
+
+    async def test_notifications_deduplicate_outside_vehicle_lock(self):
+        self.guard.meta={'notices':{}}
+        self.guard.meta_store=Store()
+        self.guard.meta_lock=asyncio.Lock()
+        self.guard.hass.services.has_service=lambda *a:True
+        self.guard.value=lambda key:'mobile_app_test'
+        self.guard.hass.services.async_call=None
+        deliveries=[]
+        async def deliver(*a,**kw):deliveries.append(a)
+        self.guard.hass.services.async_call=deliver
+        async with self.guard.lock:
+            await self.guard.send_notice('test','fault:test','2026-10-13')
+            await self.guard.send_notice('test','fault:test','2026-10-13')
+        self.assertEqual(len(deliveries),1)
+        self.assertIn('接口已接受',self.guard.meta['delivery'])
+
+    async def test_notification_failure_is_recorded_and_not_retried(self):
+        self.guard.meta={'notices':{}};self.guard.meta_store=Store();self.guard.meta_lock=asyncio.Lock()
+        self.guard.hass.services.has_service=lambda *a:True
+        self.guard.value=lambda key:'mobile_app_test'
+        attempts=[]
+        async def fail(*a,**kw):attempts.append(1);raise TimeoutError()
+        self.guard.hass.services.async_call=fail
+        await self.guard.send_notice('test','summary','2026-10-13')
+        await self.guard.send_notice('test','summary','2026-10-13')
+        self.assertEqual(attempts,[1])
+        self.assertEqual(self.guard.meta['delivery'],'手机推送失败')
+
+    async def test_summary_due_dedup_and_midday_cutoff(self):
+        from datetime import datetime
+        date='2026-10-13'
+        now=datetime(2026,10,13,8,5,tzinfo=g.ZONE).timestamp()
+        self.guard.meta={'notices':{},'armed':{},'nights':{},'pruned':date}
+        self.guard.meta_store=Store();self.guard.meta_lock=asyncio.Lock();self.guard.maintenance_lock=asyncio.Lock()
+        self.guard.last_recorded=None
+        values={'input_boolean.porsche_wake_enabled':'on','automation.porsche_wake_scheduler':'on',
+                'input_datetime.porsche_wake_departure_time':'08:00:00','input_datetime.porsche_wake_summary_time':'08:05:00',
+                'input_text.porsche_wake_notify_service':'mobile_app_test'}
+        self.guard.value=lambda key:values.get(key,'unavailable')
+        self.guard.hass.states.get=lambda key:None
+        self.guard.hass.services.has_service=lambda *a:True
+        deliveries=[]
+        async def deliver(*a,**kw):deliveries.append(a)
+        self.guard.hass.services.async_call=deliver
+        tasks=[]
+        def background(coro,name):
+            task=asyncio.create_task(coro);tasks.append(task);return task
+        self.guard.hass.async_create_background_task=background
+        self.guard.rows=[{'utc':'2026-10-13T06:00:00+00:00','slot':date+'|07:00','result':'target_reached','before':{'soc':100,'vehicle_timestamp':now-3900}}]
+        with patch.object(g.time,'time',return_value=now):
+            await self.guard.maintenance();await self.guard.maintenance()
+            await asyncio.gather(*tasks)
+        self.assertEqual(len(deliveries),1)
+        self.assertEqual(self.guard.meta['summary']['date'],date)
+        self.guard.meta.pop('summary')
+        tasks.clear()
+        with patch.object(g.time,'time',return_value=now+4*3600):await self.guard.maintenance()
+        self.assertNotIn('summary',self.guard.meta)
+
+    async def test_watchdog_missing_slot_once_and_day_count_reset(self):
+        from datetime import datetime
+        now=datetime(2026,10,13,2,tzinfo=g.ZONE).timestamp()
+        self.guard.meta={'notices':{},'armed':{'2026-10-13|01:00':now-3600},'nights':{},'pruned':'2026-10-13'}
+        self.guard.meta_store=Store();self.guard.meta_lock=asyncio.Lock();self.guard.maintenance_lock=asyncio.Lock()
+        self.guard.rows=[];self.guard.last_recorded='2026-10-12T06:00:00Z'
+        self.guard.ledger.update(date='2026-10-12',count=3)
+        values={}
+        self.guard.hass.states.get=lambda key:types.SimpleNamespace(state='old',attributes={})
+        self.guard.hass.states.async_set=lambda key,state,attrs:values.update({key:(state,attrs)})
+        notices=[];self.guard.notify=lambda *a:notices.append(a)
+        with patch.object(g.time,'time',return_value=now):
+            await self.guard.maintenance();await self.guard.maintenance()
+        self.assertEqual(len(notices),1)
+        self.assertIn('01:00',notices[0][0])
+        self.assertEqual(values['sensor.porsche_wake_result'][1]['today_attempts'],0)
+        self.assertEqual(self.guard.ledger['count'],3)
+
 
 if __name__=="__main__":unittest.main()

@@ -19,6 +19,12 @@
     },
     "porsche_wake_slot_5": {
       "name": "启用唤醒时段 5"
+    },
+    "porsche_wake_confirm_plugged": {
+      "name": "该晚已插枪且有充电需求"
+    },
+    "porsche_wake_confirm_no_intervention": {
+      "name": "该晚无人为操作或设置变化"
     }
   },
   "input_datetime": {
@@ -46,6 +52,21 @@
       "name": "唤醒时间 5（Dublin）",
       "has_date": false,
       "has_time": true
+    },
+    "porsche_wake_departure_time": {
+      "name": "出发核对基准（不写入车辆）",
+      "has_date": false,
+      "has_time": true
+    },
+    "porsche_wake_summary_time": {
+      "name": "晨间摘要时间",
+      "has_date": false,
+      "has_time": true
+    },
+    "porsche_wake_confirm_date": {
+      "name": "确认样本日期",
+      "has_date": true,
+      "has_time": false
     }
   },
   "input_number": {
@@ -95,6 +116,10 @@
     "porsche_wake_timestamp_entity": {
       "name": "车辆测量时间戳传感器（不是 HA 更新时间）",
       "max": 255
+    },
+    "porsche_wake_notify_service": {
+      "name": "iPhone 通知服务",
+      "max": 255
     }
   },
   "automation": [
@@ -140,6 +165,19 @@
         }
       ],
       "description": "计入每日请求上限，遵守总开关和冷却时间。"
+    },
+    "porsche_wake_confirm_night": {
+      "alias": "保存充电夜现场确认",
+      "sequence": [
+        {
+          "action": "porsche_wake_guard.confirm_night",
+          "data": {
+            "date": "{{ states('input_datetime.porsche_wake_confirm_date') }}",
+            "plugged": "{{ is_state('input_boolean.porsche_wake_confirm_plugged','on') }}",
+            "no_intervention": "{{ is_state('input_boolean.porsche_wake_confirm_no_intervention','on') }}"
+          }
+        }
+      ]
     }
   }
 }

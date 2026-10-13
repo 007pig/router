@@ -20,9 +20,14 @@ from homeassistant.components import persistent_notification
 from homeassistant.exceptions import HomeAssistantError
 
 from .policy import ZONE, decide, slot_key
+from .audit import Audit
+from .runtime import Runtime
 
 DOMAIN = "porsche_wake_guard"
 RESULT_LABELS = {
+    "observation_node_missed": "错过观察节点，未补发缓存查询",
+    "observation_finished": "观察窗口已结束",
+    "summary_snapshot": "晨间汇总已读取本地缓存",
     "ready_disabled_until_configured": "唤醒保护已就绪",
     "inspection_no_request": "已查看车辆缓存，未发送唤醒请求",
     "request_started": "正在请求车辆实时状态",
@@ -112,11 +117,18 @@ async def async_setup(hass, config):
     hass.services.async_register(DOMAIN, "inspect", guard.inspect, schema=vol.Schema({}))
     hass.services.async_register(DOMAIN, "request_once_at", guard.request_once_at,
         schema=vol.Schema({vol.Required("slot"): str}))
-    guard.publish("ready_disabled_until_configured")
+    hass.services.async_register(DOMAIN,"refresh_report",guard.refresh_report,schema=vol.Schema({}))
+    hass.services.async_register(DOMAIN,"notification_test",guard.notification_test,schema=vol.Schema({}))
+    hass.services.async_register(DOMAIN,"confirm_night",guard.confirm_night,schema=vol.Schema({
+        vol.Required("date"):str,vol.Required("plugged"):cv.boolean,vol.Required("no_intervention"):cv.boolean}))
+    if hass.is_running:
+        await guard.runtime_start()
+    else:
+        hass.bus.async_listen_once('homeassistant_started',guard.runtime_start)
     return True
 
 
-class Guard:
+class Guard(Runtime):
     def __init__(self, hass):
         self.hass = hass
         self.store = Store(hass, 1, DOMAIN, private=True, atomic_writes=True)
@@ -127,6 +139,9 @@ class Guard:
         self.coordinator = None
         self.logpath = Path(hass.config.path("porsche_wake_audit.jsonl"))
         self.marker = Path(hass.config.path(".porsche_wake_initialized"))
+        self.audit = Audit(hass.config.path(''))
+        self.rows = []
+        self.last_recorded = None
 
     async def load(self):
         try:
@@ -154,10 +169,6 @@ class Guard:
             self.notify("唤醒持久化状态不可用，已停止发送请求。请检查存储。")
             return False
 
-    def notify(self, message):
-        persistent_notification.async_create(self.hass, message,
-            title="Porsche 定时唤醒", notification_id=DOMAIN)
-
     def publish(self, result, **attrs):
         sample = attrs.get("snapshot") or attrs.get("after") or attrs.get("before")
         if sample:
@@ -165,8 +176,8 @@ class Guard:
         label = RESULT_LABELS.get(result, "未识别的执行结果，请查看状态代码")
         self.hass.states.async_set("sensor.porsche_wake_result", label, {
             "result_code": result,
-            "friendly_name": "Porsche 唤醒结果", "last_recorded": datetime.now(timezone.utc).isoformat(),
-            "today_attempts": self.ledger.get("count", 0),
+            "friendly_name": "Porsche 唤醒结果", "last_recorded": self.last_recorded or datetime.now(timezone.utc).isoformat(),
+            "today_attempts": self.ledger.get("count", 0) if self.ledger.get('date')==datetime.now(ZONE).date().isoformat() else 0,
             "one_off_local": self.ledger.get("one_off"),
             "blocked_until_utc": self.ledger.get("blocked_until", 0), **attrs})
 
@@ -187,18 +198,15 @@ class Guard:
 
     async def record(self, result, **attrs):
         row = dict(utc=datetime.now(timezone.utc).isoformat(), vehicle="Cayenne", result=result, **attrs)
-        def append():
-            fd = os.open(self.logpath, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-            with os.fdopen(fd, "a") as f:
-                f.write(json.dumps(row, ensure_ascii=False)+"\n")
-                f.flush()
-                os.fsync(f.fileno())
+        if attrs.get('slot'):row['request_id']='Cayenne|'+attrs['slot']
         try:
-            await self.hass.async_add_executor_job(append)
+            await self.hass.async_add_executor_job(self.audit.append,row)
         except Exception:
             self.failed = True
             self.notify("无法写入唤醒审计记录，已停止发送请求。")
             raise
+        self.rows.append(row)
+        self.last_recorded=row['utc']
         self.publish(result, **attrs)
 
     def value(self, entity):
@@ -230,8 +238,8 @@ class Guard:
                      and entry.unique_id.endswith("-get_current_overview") and not entry.disabled_by)
         plugged = mapped("plugged")
         status = mapped("charging")
-        power = numeric(mapped("power"))
-        power_source = "integration_entity"
+        power = None
+        power_source = "unknown"
         stamp = None
         raw_stamp = mapped("timestamp")
         try:
@@ -253,9 +261,15 @@ class Guard:
                     for measurement in getattr(vehicle,"status",{}).get("measurements",[]):
                         if measurement.get("key") in ("BATTERY_LEVEL","CHARGING_SUMMARY","CHARGING_RATE","CHARGING_SETTINGS"):
                             if measurement["key"] == "CHARGING_RATE":
-                                native_power = numeric(measurement.get("value",{}).get("chargingPowerkW"))
-                                if native_power is not None and native_power >= 0:
-                                    power, power_source = native_power, "CHARGING_RATE.chargingPowerkW"
+                                values=measurement.get('value',{})
+                                for field in ('chargingPowerkW','chargingPower'):
+                                    native_power=numeric(values.get(field))
+                                    # The library synthesizes chargingPower=0 when chargingRate is absent.
+                                    if field=='chargingPower' and not values.get('chargingRate'):
+                                        continue
+                                    if native_power is not None and native_power>=0:
+                                        power,power_source=native_power,'CHARGING_RATE.'+field
+                                        break
                             metadata.append({"key":measurement["key"],"fields":sorted(measurement),
                                 "status_fields":sorted(measurement.get("status",{})),
                                 "value_fields":sorted(measurement.get("value",{}))})
@@ -273,9 +287,11 @@ class Guard:
         connected = {"on":True,"off":False}.get(plugged)
         if connected is None and status == "not_plugged":
             connected = False
+        contradictory = (status in ('charging_completed','not_plugged','charging_paused') and power is not None and power>0.1)
         return dict(available=valid and self.value(button) != "unavailable",
                     soc=numeric(mapped("soc")), plugged=connected,
-                    charging=True if status == "charging" or (power is not None and power > 0.1) else None,
+                    charging=True if not contradictory and status in ('charging','instant_charging') and power is not None and power>0.1 else None,
+                    contradictory=contradictory,
                     charging_status=status if status in {"charging", "charging_paused", "charging_stopped", "charging_completed", "charging_error", "initialising", "instant_charging", "not_charging", "not_plugged", "off", "on", "unknown", "unavailable"} else "other",
                     power_kw=power, power_source=power_source, vehicle_timestamp=stamp, measurement_timestamps=vehicle_times,
                     measurement_metadata=metadata)
@@ -342,6 +358,8 @@ class Guard:
                 if reason in ("button_unavailable", "authentication_required"):
                     self.notify("Porsche 集成或实时查询按钮不可用；请在集成页面检查认证及实体配置。")
                 return
+            if self.ledger.get('observation'):
+                return
             date = key.split("|")[0]
             self.ledger["count"] = (self.ledger.get("count",0) if self.ledger.get("date")==date else 0)+1
             self.ledger.update(date=date, last_attempt=now, pending=True)
@@ -382,18 +400,47 @@ class Guard:
                 self.ledger["pending"] = False
                 await self.save()
                 await self.record(reason, slot=key, before=before)
-                self.notify("实时查询失败或结果未知，后续请求已暂停。请查看 Porsche 唤醒结果与集成状态。")
+                self.notify("实时查询失败或结果未知，后续请求已暂停。请查看 Porsche 唤醒结果与集成状态。",reason)
                 return
             self.ledger["pending"] = False
+            self.ledger['observation']={'slot':key,'before':before,'started':time.time(),'cursor':0,'button':button}
             await self.save()
             await self.record("service_returned_success",slot=key,before=before,after=self.snapshot())
-            # Observe natural cached updates only; this loop sends no further Porsche requests.
-            for minutes in (2,4,6,8,10):
-                await asyncio.sleep(120)
+            if hasattr(self,'meta') and self.meta.get('last_fault'):
+                self.hass.async_create_background_task(self.send_notice('实时查询已恢复正常；充电效果仍以车辆测量为准。','recovery:'+self.meta['last_fault']),'porsche-recovery-notice')
+                self.meta.pop('last_fault',None)
+            await self.observe()
+
+    async def resume_observation(self):
+        async with self.lock:
+            await self.observe(resuming=True)
+
+    async def observe(self,resuming=False):
+            job=self.ledger.get('observation')
+            if not job:return
+            key,before=job['slot'],job['before']
+            if resuming:
+                self.snapshot()
+                if job.get('button')!=self.value('input_text.porsche_wake_button_entity') or self.vehicle is None:
+                    await self.record('observation_cancelled',slot=key,reason='vehicle_mapping_unavailable')
+                    self.ledger.pop('observation',None);await self.save();return
+            for index,minutes in enumerate((2,4,6,8,10)):
+                if index<job['cursor']:continue
+                due=job['started']+minutes*60
+                if resuming and due<time.time():
+                    job['cursor']=index+1;await self.save()
+                    await self.record('observation_node_missed',slot=key,minutes=minutes)
+                    continue
+                await asyncio.sleep(max(0,due-time.time()))
                 if self.value("input_boolean.porsche_wake_enabled") != "on":
                     await self.record("observation_cancelled",slot=key,minutes=minutes)
+                    self.ledger.pop('observation',None);await self.save()
                     return
+                job['cursor']=index+1
+                await self.save() # Reserve observation node before a possible cached API request.
                 if minutes in (2,10) and self.vehicle is not None:
+                    hooks=self.vehicle.connection.asyncClient.event_hooks['response']
+                    if stop_library_retry not in hooks:hooks.append(stop_library_retry)
                     failures = []
                     context_token = REQUEST_FAILURES.set(failures)
                     try:
@@ -410,8 +457,11 @@ class Guard:
                         await self.save()
                         await self.record("cached_read_failed",slot=key,minutes=minutes,
                                           status_code=code if isinstance(code,int) else None)
-                        self.notify("后续缓存查询失败，暂停唤醒 24 小时；不重复发送实时查询。")
+                        self.notify("后续缓存查询失败，暂停唤醒 24 小时；不重复发送实时查询。",'cached_read_failed:'+str(code))
+                        self.ledger.pop('observation',None);await self.save()
                         return
                     finally:
                         REQUEST_FAILURES.reset(context_token)
                 await self.record("observation",slot=key,minutes=minutes,before=before,after=self.snapshot())
+            self.ledger.pop('observation',None)
+            await self.save()

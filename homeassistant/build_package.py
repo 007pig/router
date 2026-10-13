@@ -40,6 +40,16 @@ for key,name in [
     ("timestamp","车辆测量时间戳传感器（不是 HA 更新时间）"),
 ]:
     p["input_text"][f"porsche_wake_{key}_entity"] = {"name":name,"max":255}
+p['input_text']['porsche_wake_notify_service']={'name':'iPhone 通知服务','max':255}
+p['input_datetime']['porsche_wake_departure_time']={'name':'出发核对基准（不写入车辆）','has_date':False,'has_time':True}
+p['input_datetime']['porsche_wake_summary_time']={'name':'晨间摘要时间','has_date':False,'has_time':True}
+p['input_datetime']['porsche_wake_confirm_date']={'name':'确认样本日期','has_date':True,'has_time':False}
+p['input_boolean']['porsche_wake_confirm_plugged']={'name':'该晚已插枪且有充电需求'}
+p['input_boolean']['porsche_wake_confirm_no_intervention']={'name':'该晚无人为操作或设置变化'}
+p['script']['porsche_wake_confirm_night']={'alias':'保存充电夜现场确认','sequence':[{'action':'porsche_wake_guard.confirm_night','data':{
+    'date':"{{ states('input_datetime.porsche_wake_confirm_date') }}",
+    'plugged':"{{ is_state('input_boolean.porsche_wake_confirm_plugged','on') }}",
+    'no_intervention':"{{ is_state('input_boolean.porsche_wake_confirm_no_intervention','on') }}"}}]}
 dashboard={"title":"Porsche 唤醒试验","views":[{"title":"Cayenne","path":"cayenne","cards":[
     {"type":"markdown","content":"## Cayenne 唤醒试验\n时区 Europe/Dublin。只发送实时概览查询，不修改 Departure Timer 或 Direct Charging。\n\n**服务调用成功 ≠ 车辆响应 ≠ 恢复充电。** 首次完成 Porsche 认证、核对实体后再启用总开关。时间按分钟执行，重启不补发。"},
     {"type":"entities","title":"运行与限制","entities":["input_boolean.porsche_wake_enabled","automation.porsche_wake_scheduler","sensor.porsche_wake_result"]+["input_number.porsche_wake_"+k for k in ("target_soc","interval_minutes","daily_limit")]+["script.porsche_wake_manual_test"]},
@@ -48,6 +58,20 @@ dashboard={"title":"Porsche 唤醒试验","views":[{"title":"Cayenne","path":"ca
     {"type":"entities","title":"车辆实体映射（首次配置）","entities":["input_text."+k for k in p["input_text"]]},
     {"type":"history-graph","title":"请求结果（24 小时）","hours_to_show":24,"entities":["sensor.porsche_wake_result"]},
 ]}]}
+cards=dashboard['views'][0]['cards']
+maintenance=cards.pop(4)
+cards[0]['content']='## Cayenne 充电观察\n请求成功、车辆响应和充电恢复分别判断。数据年龄以车辆测量时间计算，不增加查询。'
+cards.insert(1,{'type':'entities','title':'状态与效果','entities':['sensor.porsche_wake_health','sensor.porsche_wake_effect',
+    {'type':'attribute','entity':'sensor.porsche_wake_health','attribute':'next_slot','name':'下一计划时刻'},
+    {'type':'attribute','entity':'sensor.porsche_wake_health','attribute':'vehicle_time','name':'车辆测量时间'},
+    {'type':'attribute','entity':'sensor.porsche_wake_health','attribute':'data_age_minutes','name':'数据年龄（分钟）'},
+    'sensor.porsche_wake_notification','sensor.porsche_wake_trial']})
+cards.append({'type':'markdown','title':'当晚执行时间线','content':"{{ state_attr('sensor.porsche_wake_timeline','markdown') or '等待数据' }}"})
+cards.append({'type':'markdown','title':'最近一晚摘要','content':"{{ state_attr('sensor.porsche_wake_night_summary','message') or '等待晨间汇总' }}"})
+dashboard['views'].append({'title':'设置与样本','path':'settings','cards':[
+    maintenance,{'type':'entities','title':'通知与核对时间','entities':['input_text.porsche_wake_notify_service','input_datetime.porsche_wake_departure_time','input_datetime.porsche_wake_summary_time']},
+    {'type':'entities','title':'确认有效充电夜（不确定时不要勾选）','entities':['input_datetime.porsche_wake_confirm_date','input_boolean.porsche_wake_confirm_plugged','input_boolean.porsche_wake_confirm_no_intervention','script.porsche_wake_confirm_night']},
+    {'type':'markdown','content':'异常和晨间摘要推送到已选 iPhone；普通成功、正常跳过不逐条通知。08:00 是本地核对基准，不修改车辆定时器。手机接口接受不代表实际送达。'}]})
 (root/"packages").mkdir(exist_ok=True)
 (root/"packages/porsche_wake.yaml").write_text(json.dumps(p,ensure_ascii=False,indent=2)+"\n")
 (root/"porsche_wake_dashboard.yaml").write_text(json.dumps(dashboard,ensure_ascii=False,indent=2)+"\n")

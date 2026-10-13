@@ -22,3 +22,26 @@ request_once_at:
       example: "2026-10-12|07:00"
       selector:
         text:
+refresh_report:
+  name: 刷新本地效果面板
+  description: 只读取已有日志和缓存，不发送车辆请求。
+notification_test:
+  name: 测试 iPhone 通知
+  description: 发送明确标注的测试通知，不唤醒车辆。
+confirm_night:
+  name: 确认充电夜现场条件
+  description: 用于有效样本统计，不修改车辆设置。
+  fields:
+    date:
+      required: true
+      example: "2026-10-13"
+      selector:
+        text:
+    plugged:
+      required: true
+      selector:
+        boolean:
+    no_intervention:
+      required: true
+      selector:
+        boolean:
