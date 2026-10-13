@@ -1,7 +1,7 @@
 {
   "domain": "porsche_wake_guard",
   "name": "Porsche wake request guard",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "codeowners": [],
   "dependencies": ["input_boolean", "input_datetime", "input_number", "input_text"],
   "iot_class": "local_push"

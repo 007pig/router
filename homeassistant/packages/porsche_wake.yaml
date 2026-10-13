@@ -25,6 +25,9 @@
     },
     "porsche_wake_confirm_no_intervention": {
       "name": "该晚无人为操作或设置变化"
+    },
+    "porsche_wake_evening_enabled": {
+      "name": "晚间充电准备检查（独立开关）"
     }
   },
   "input_datetime": {
@@ -67,6 +70,11 @@
       "name": "确认样本日期",
       "has_date": true,
       "has_time": false
+    },
+    "porsche_wake_evening_time": {
+      "name": "晚间充电准备检查时间",
+      "has_date": false,
+      "has_time": true
     }
   },
   "input_number": {
@@ -85,9 +93,9 @@
       "mode": "box"
     },
     "porsche_wake_daily_limit": {
-      "name": "每日请求上限",
+      "name": "夜间每日请求上限",
       "min": 1,
-      "max": 5,
+      "max": 4,
       "step": 1,
       "mode": "box"
     }

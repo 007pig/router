@@ -1,4 +1,4 @@
-"""Local monitoring, deduplicated notifications and daily reports; never wakes cars."""
+"""Local reports and notifications; dispatches the separately guarded evening job."""
 import asyncio
 import hashlib
 import time
@@ -6,7 +6,7 @@ from pathlib import Path
 from datetime import datetime,timedelta,timezone
 from homeassistant.helpers.storage import Store
 from homeassistant.components import persistent_notification
-from .policy import ZONE
+from .policy import ZONE,daily_counts
 from .evidence import classify,night_report,epoch
 
 DOMAIN='porsche_wake_guard'
@@ -37,13 +37,19 @@ class Runtime:
             await self.meta_store.async_save(self.meta)
         if not self.notification_disabled:
             await self.hass.async_add_executor_job(marker.touch)
+        if not self.meta.get('evening_initialized'):
+            await self.hass.services.async_call('input_datetime','set_datetime',{'entity_id':'input_datetime.porsche_wake_evening_time','time':'20:00:00'},blocking=True)
+            await self.hass.services.async_call('input_boolean','turn_on',{'entity_id':'input_boolean.porsche_wake_evening_enabled'},blocking=True)
+            self.meta['evening_initialized']=True
+            await self.meta_store.async_save(self.meta)
         try:self.rows=await self.hass.async_add_executor_job(self.audit.read)
         except Exception:
             self.failed=True
             self.notify('审计日志无法读取，已停止唤醒。请检查日志文件。','audit_unreadable')
             return
-        if self.rows:
-            last=self.rows[-1];self.last_recorded=last['utc']
+        night_rows=[r for r in self.rows if r.get('purpose')!='evening_check']
+        if night_rows:
+            last=night_rows[-1];self.last_recorded=last['utc']
             self.publish(last['result'],**{k:v for k,v in last.items() if k not in ('utc','vehicle','result','request_id')})
         async_track_time_interval(self.hass,self.maintenance,timedelta(seconds=30))
         await self.maintenance()
@@ -116,12 +122,12 @@ class Runtime:
             self.meta['nights'][date]={'plugged':call.data['plugged'],'no_intervention':call.data['no_intervention'],
                                      'departure':departure if len(departure)==5 else '08:00','target':self.number('target_soc',100)}
             await self.meta_store.async_save(self.meta)
-        await self.maintenance()
+        await self.maintenance(allow_evening=False)
 
     async def refresh_report(self,call):
-        await self.maintenance()
+        await self.maintenance(allow_evening=False)
 
-    async def maintenance(self,event=None):
+    async def maintenance(self,event=None,allow_evening=True):
         if not hasattr(self,'maintenance_lock') or self.maintenance_lock.locked():return
         async with self.maintenance_lock:
             now=time.time();local=datetime.fromtimestamp(now,ZONE);date=local.date().isoformat()
@@ -141,6 +147,8 @@ class Runtime:
             self.hass.states.async_set('sensor.porsche_wake_health','运行正常' if pause=='无' else pause,{
                 'friendly_name':'Porsche 运行状态','next_slot':next_slot.isoformat() if next_slot and enabled else None,
                 'today_attempts':self.ledger.get('count',0) if self.ledger.get('date')==date else 0,
+                'evening_attempts':self.ledger.get('evening_count',0) if self.ledger.get('evening_date')==date else 0,
+                'total_attempts':sum(daily_counts(self.ledger,date)),
                 'vehicle_time':datetime.fromtimestamp(stamp,ZONE).isoformat() if stamp else None,
                 'data_age_minutes':round((now-stamp)/60,1) if stamp and stamp<=now else None,
                 'pause_reason':pause,'observation_in_progress':bool(self.ledger.get('observation'))})
@@ -216,3 +224,5 @@ class Runtime:
                 async with self.meta_lock:
                     self.meta['pruned']=date
                     await self.meta_store.async_save(self.meta)
+            if allow_evening:await self.evening_maintenance(now)
+            else:self.publish_evening()

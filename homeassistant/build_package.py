@@ -31,7 +31,7 @@ for i in range(1, 6):
 for key,name,lo,hi,step in [
     ("target_soc","本地目标电量（不写入车辆）",1,100,1),
     ("interval_minutes","请求最小间隔（分钟）",60,1440,1),
-    ("daily_limit","每日请求上限",1,5,1),
+    ("daily_limit","夜间每日请求上限",1,4,1),
 ]:
     p["input_number"]["porsche_wake_"+key] = {"name":name,"min":lo,"max":hi,"step":step,"mode":"box"}
 for key,name in [
@@ -46,6 +46,8 @@ p['input_datetime']['porsche_wake_summary_time']={'name':'晨间摘要时间','h
 p['input_datetime']['porsche_wake_confirm_date']={'name':'确认样本日期','has_date':True,'has_time':False}
 p['input_boolean']['porsche_wake_confirm_plugged']={'name':'该晚已插枪且有充电需求'}
 p['input_boolean']['porsche_wake_confirm_no_intervention']={'name':'该晚无人为操作或设置变化'}
+p['input_boolean']['porsche_wake_evening_enabled']={'name':'晚间充电准备检查（独立开关）'}
+p['input_datetime']['porsche_wake_evening_time']={'name':'晚间充电准备检查时间','has_date':False,'has_time':True}
 p['script']['porsche_wake_confirm_night']={'alias':'保存充电夜现场确认','sequence':[{'action':'porsche_wake_guard.confirm_night','data':{
     'date':"{{ states('input_datetime.porsche_wake_confirm_date') }}",
     'plugged':"{{ is_state('input_boolean.porsche_wake_confirm_plugged','on') }}",
@@ -68,10 +70,15 @@ cards.insert(1,{'type':'entities','title':'状态与效果','entities':['sensor.
     'sensor.porsche_wake_notification','sensor.porsche_wake_trial']})
 cards.append({'type':'markdown','title':'当晚执行时间线','content':"{{ state_attr('sensor.porsche_wake_timeline','markdown') or '等待数据' }}"})
 cards.append({'type':'markdown','title':'最近一晚摘要','content':"{{ state_attr('sensor.porsche_wake_night_summary','message') or '等待晨间汇总' }}"})
+cards.append({'type':'entities','title':'晚间充电准备','entities':['input_boolean.porsche_wake_evening_enabled','input_datetime.porsche_wake_evening_time','sensor.porsche_wake_evening_check',
+    {'type':'attribute','entity':'sensor.porsche_wake_evening_check','attribute':'notification_result','name':'通知结果'},
+    {'type':'attribute','entity':'sensor.porsche_wake_health','attribute':'evening_attempts','name':'今日晚间查询次数'},
+    {'type':'attribute','entity':'sensor.porsche_wake_health','attribute':'total_attempts','name':'今日实时请求总次数'}]})
+cards.append({'type':'markdown','content':"{{ state_attr('sensor.porsche_wake_evening_check','message') or '每日 20:00 检查；状态无法确认时最多查询一次。' }}"})
 dashboard['views'].append({'title':'设置与样本','path':'settings','cards':[
     maintenance,{'type':'entities','title':'通知与核对时间','entities':['input_text.porsche_wake_notify_service','input_datetime.porsche_wake_departure_time','input_datetime.porsche_wake_summary_time']},
     {'type':'entities','title':'确认有效充电夜（不确定时不要勾选）','entities':['input_datetime.porsche_wake_confirm_date','input_boolean.porsche_wake_confirm_plugged','input_boolean.porsche_wake_confirm_no_intervention','script.porsche_wake_confirm_night']},
-    {'type':'markdown','content':'异常和晨间摘要推送到已选 iPhone；普通成功、正常跳过不逐条通知。08:00 是本地核对基准，不修改车辆定时器。手机接口接受不代表实际送达。'}]})
+    {'type':'markdown','content':'异常和晨间摘要推送到已选 iPhone；普通成功、正常跳过不逐条通知。08:00 是本地核对基准，不修改车辆定时器。手机接口接受不代表实际送达。\n\n晚间检查有独立开关，不受夜间总开关控制。最多额外实时查询 1 次；夜间最多 4 次，全天合计最多 5 次。只提醒，不切换 Direct Charging。'}]})
 (root/"packages").mkdir(exist_ok=True)
 (root/"packages/porsche_wake.yaml").write_text(json.dumps(p,ensure_ascii=False,indent=2)+"\n")
 (root/"porsche_wake_dashboard.yaml").write_text(json.dumps(dashboard,ensure_ascii=False,indent=2)+"\n")

@@ -5,6 +5,11 @@ from zoneinfo import ZoneInfo
 ZONE = ZoneInfo("Europe/Dublin")
 
 
+def daily_counts(ledger,date):
+    return (ledger.get('count',0) if ledger.get('date')==date else 0,
+            ledger.get('evening_count',0) if ledger.get('evening_date')==date else 0)
+
+
 def slot_key(now, times, manual=False):
     local = datetime.fromtimestamp(now, ZONE)
     minute = local.strftime("%H:%M")
@@ -26,8 +31,10 @@ def decide(now, key, ledger, snapshot, target, interval, limit):
     if now - ledger.get("last_attempt", 0) < (60 if one_off else max(60, interval)) * 60:
         return "minimum_interval"
     date = key.split("|")[0]
-    if ledger.get("date") == date and ledger.get("count", 0) >= min(5, limit):
+    night,evening=daily_counts(ledger,date)
+    if night >= min(4, limit):
         return "daily_limit"
+    if night+evening>=5:return 'total_daily_limit'
     if not snapshot.get("available"):
         return "button_unavailable"
     if one_off:

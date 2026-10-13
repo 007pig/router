@@ -98,6 +98,37 @@
           "type": "markdown",
           "title": "最近一晚摘要",
           "content": "{{ state_attr('sensor.porsche_wake_night_summary','message') or '等待晨间汇总' }}"
+        },
+        {
+          "type": "entities",
+          "title": "晚间充电准备",
+          "entities": [
+            "input_boolean.porsche_wake_evening_enabled",
+            "input_datetime.porsche_wake_evening_time",
+            "sensor.porsche_wake_evening_check",
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_evening_check",
+              "attribute": "notification_result",
+              "name": "通知结果"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_health",
+              "attribute": "evening_attempts",
+              "name": "今日晚间查询次数"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_health",
+              "attribute": "total_attempts",
+              "name": "今日实时请求总次数"
+            }
+          ]
+        },
+        {
+          "type": "markdown",
+          "content": "{{ state_attr('sensor.porsche_wake_evening_check','message') or '每日 20:00 检查；状态无法确认时最多查询一次。' }}"
         }
       ]
     },
@@ -139,7 +170,7 @@
         },
         {
           "type": "markdown",
-          "content": "异常和晨间摘要推送到已选 iPhone；普通成功、正常跳过不逐条通知。08:00 是本地核对基准，不修改车辆定时器。手机接口接受不代表实际送达。"
+          "content": "异常和晨间摘要推送到已选 iPhone；普通成功、正常跳过不逐条通知。08:00 是本地核对基准，不修改车辆定时器。手机接口接受不代表实际送达。\n\n晚间检查有独立开关，不受夜间总开关控制。最多额外实时查询 1 次；夜间最多 4 次，全天合计最多 5 次。只提醒，不切换 Direct Charging。"
         }
       ]
     }

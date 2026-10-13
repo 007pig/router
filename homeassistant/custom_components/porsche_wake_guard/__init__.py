@@ -22,9 +22,16 @@ from homeassistant.exceptions import HomeAssistantError
 from .policy import ZONE, decide, slot_key
 from .audit import Audit
 from .runtime import Runtime
+from .evening import Evening,NON_DIRECT_MODES
 
 DOMAIN = "porsche_wake_guard"
 RESULT_LABELS = {
+    "evening_check_started":"正在检查晚间充电准备",
+    "evening_refresh_started":"晚间检查正在查询车辆实时状态",
+    "evening_refresh_success":"晚间实时查询调用成功",
+    "evening_check_complete":"晚间充电准备检查已完成",
+    "evening_interrupted":"晚间检查被重启中断，未重复查询",
+    "total_daily_limit":"已达到今日实时请求总上限，本次已跳过",
     "observation_node_missed": "错过观察节点，未补发缓存查询",
     "observation_finished": "观察窗口已结束",
     "summary_snapshot": "晨间汇总已读取本地缓存",
@@ -119,6 +126,7 @@ async def async_setup(hass, config):
         schema=vol.Schema({vol.Required("slot"): str}))
     hass.services.async_register(DOMAIN,"refresh_report",guard.refresh_report,schema=vol.Schema({}))
     hass.services.async_register(DOMAIN,"notification_test",guard.notification_test,schema=vol.Schema({}))
+    hass.services.async_register(DOMAIN,"evening_notification_test",guard.evening_notification_test,schema=vol.Schema({}))
     hass.services.async_register(DOMAIN,"confirm_night",guard.confirm_night,schema=vol.Schema({
         vol.Required("date"):str,vol.Required("plugged"):cv.boolean,vol.Required("no_intervention"):cv.boolean}))
     if hass.is_running:
@@ -128,7 +136,7 @@ async def async_setup(hass, config):
     return True
 
 
-class Guard(Runtime):
+class Guard(Runtime,Evening):
     def __init__(self, hass):
         self.hass = hass
         self.store = Store(hass, 1, DOMAIN, private=True, atomic_writes=True)
@@ -142,6 +150,7 @@ class Guard(Runtime):
         self.audit = Audit(hass.config.path(''))
         self.rows = []
         self.last_recorded = None
+        self.evening_task = None
 
     async def load(self):
         try:
@@ -161,9 +170,13 @@ class Guard(Runtime):
             if self.ledger.get("pending"):
                 self.ledger["pending"] = False
                 self.ledger["blocked_until"] = max(time.time()+86400, self.ledger.get("blocked_until", 0))
+                purpose=self.ledger.pop('pending_purpose',None)
                 await self.store.async_save(self.ledger)
-                await self.record("interrupted_request_unknown")
-                self.notify("上次请求被系统重启中断，结果未知；暂停 24 小时，不自动补发。")
+                if purpose=='evening':
+                    await self.record('evening_interrupted',purpose='evening_check')
+                else:
+                    await self.record("interrupted_request_unknown")
+                    self.notify("上次请求被系统重启中断，结果未知；暂停 24 小时，不自动补发。")
             return True
         except Exception:
             self.notify("唤醒持久化状态不可用，已停止发送请求。请检查存储。")
@@ -199,6 +212,8 @@ class Guard(Runtime):
     async def record(self, result, **attrs):
         row = dict(utc=datetime.now(timezone.utc).isoformat(), vehicle="Cayenne", result=result, **attrs)
         if attrs.get('slot'):row['request_id']='Cayenne|'+attrs['slot']
+        elif attrs.get('purpose')=='evening_check' and attrs.get('evening_date'):
+            row['request_id']='Cayenne|evening|'+attrs['evening_date']
         try:
             await self.hass.async_add_executor_job(self.audit.append,row)
         except Exception:
@@ -206,8 +221,9 @@ class Guard(Runtime):
             self.notify("无法写入唤醒审计记录，已停止发送请求。")
             raise
         self.rows.append(row)
-        self.last_recorded=row['utc']
-        self.publish(result, **attrs)
+        if attrs.get('purpose')!='evening_check':
+            self.last_recorded=row['utc']
+            self.publish(result, **attrs)
 
     def value(self, entity):
         state = self.hass.states.get(entity)
@@ -250,6 +266,8 @@ class Guard(Runtime):
             pass
         metadata = []
         vehicle_times = {}
+        mode=None
+        direct_switch='unavailable'
         self.vehicle = None
         self.coordinator = None
         if valid:
@@ -260,6 +278,9 @@ class Guard(Runtime):
                     self.vehicle, self.coordinator = vehicle, coordinator
                     for measurement in getattr(vehicle,"status",{}).get("measurements",[]):
                         if measurement.get("key") in ("BATTERY_LEVEL","CHARGING_SUMMARY","CHARGING_RATE","CHARGING_SETTINGS"):
+                            if measurement['key']=='CHARGING_SUMMARY':
+                                raw_mode=measurement.get('value',{}).get('mode')
+                                if isinstance(raw_mode,str) and raw_mode.upper() in NON_DIRECT_MODES|{'DIRECT'}:mode=raw_mode.upper()
                             if measurement["key"] == "CHARGING_RATE":
                                 values=measurement.get('value',{})
                                 for field in ('chargingPowerkW','chargingPower'):
@@ -287,11 +308,19 @@ class Guard(Runtime):
         connected = {"on":True,"off":False}.get(plugged)
         if connected is None and status == "not_plugged":
             connected = False
+        if valid:
+            device_id=getattr(entry,'device_id',None)
+            registry=er.async_get(self.hass)
+            if device_id and hasattr(registry,'entities'):
+                matches=[e.entity_id for e in registry.entities.values() if e.platform=='porscheconnect' and e.device_id==device_id and e.entity_id.startswith('switch.') and e.unique_id.endswith('-direct_charging') and not e.disabled_by]
+                if len(matches)==1:direct_switch=self.value(matches[0])
         contradictory = (status in ('charging_completed','not_plugged','charging_paused') and power is not None and power>0.1)
         return dict(available=valid and self.value(button) != "unavailable",
                     soc=numeric(mapped("soc")), plugged=connected,
                     charging=True if not contradictory and status in ('charging','instant_charging') and power is not None and power>0.1 else None,
                     contradictory=contradictory,
+                    charging_mode=mode,direct_switch=direct_switch,
+                    plugged_timestamp=vehicle_times.get('CHARGING_SUMMARY') if status=='not_plugged' else None,
                     charging_status=status if status in {"charging", "charging_paused", "charging_stopped", "charging_completed", "charging_error", "initialising", "instant_charging", "not_charging", "not_plugged", "off", "on", "unknown", "unavailable"} else "other",
                     power_kw=power, power_source=power_source, vehicle_timestamp=stamp, measurement_timestamps=vehicle_times,
                     measurement_metadata=metadata)
@@ -316,6 +345,37 @@ class Guard(Runtime):
             self.ledger["auth_block"] = False
             await self.save()
             await self.record("authentication_hold_cleared")
+
+    async def press_current(self):
+        # Revalidate the configured real-time-overview button immediately before dispatch.
+        if not self.snapshot().get('available'):
+            raise HomeAssistantError('Vehicle real-time button is unavailable')
+        button=self.value('input_text.porsche_wake_button_entity')
+        if self.vehicle is not None:
+            hooks=self.vehicle.connection.asyncClient.event_hooks['response']
+            if stop_library_retry not in hooks:hooks.append(stop_library_retry)
+        logger=logging.getLogger('pyporscheconnectapi.vehicle')
+        if not any(isinstance(f,PrivateFailureCapture) for f in logger.filters):logger.addFilter(PrivateFailureCapture())
+        logger.setLevel(logging.ERROR)
+        failures=[];token=REQUEST_FAILURES.set(failures)
+        try:
+            async with asyncio.timeout(300):
+                await self.hass.services.async_call('button','press',{'entity_id':button},blocking=True)
+            if failures:raise ObservedFailure(failures[0])
+        finally:REQUEST_FAILURES.reset(token)
+
+    def apply_request_failure(self,exc,now):
+        response=getattr(exc,'response',None)
+        status=getattr(exc,'status_code',None) or getattr(exc,'code',None) or getattr(response,'status_code',None)
+        reason='timeout_unknown' if isinstance(exc,TimeoutError) else 'request_failed_unknown'
+        until=datetime.fromtimestamp(now,ZONE).replace(hour=0,minute=0,second=0,microsecond=0)+timedelta(days=1)
+        self.ledger['blocked_until']=until.timestamp()
+        if status in (401,403):
+            self.ledger['auth_block']=True;reason='authentication_required'
+        elif status==429:
+            reason='rate_limited';self.ledger['blocked_until']=retry_deadline(exc,now)
+        self.ledger['pending']=False
+        return reason
 
     async def run(self, call):
         if self.lock.locked() or self.failed:
@@ -366,38 +426,10 @@ class Guard(Runtime):
             await self.save()  # Must finish atomic persistent reservation BEFORE button.press.
             await self.record("request_started", slot=key, before=before)
             button = self.value("input_text.porsche_wake_button_entity")
-            if self.vehicle is not None:
-                hooks = self.vehicle.connection.asyncClient.event_hooks["response"]
-                if stop_library_retry not in hooks:
-                    hooks.append(stop_library_retry)
             try:
-                vehicle_logger = logging.getLogger("pyporscheconnectapi.vehicle")
-                if not any(isinstance(f, PrivateFailureCapture) for f in vehicle_logger.filters):
-                    vehicle_logger.addFilter(PrivateFailureCapture())
-                vehicle_logger.setLevel(logging.ERROR)
-                failures = []
-                context_token = REQUEST_FAILURES.set(failures)
-                try:
-                    async with asyncio.timeout(300):
-                        await self.hass.services.async_call("button", "press", {"entity_id":button}, blocking=True)
-                    if failures:
-                        raise ObservedFailure(failures[0])
-                finally:
-                    REQUEST_FAILURES.reset(context_token)
+                await self.press_current()
             except Exception as exc:
-                # Inspect structured status only. Never log exception text/URLs/response bodies.
-                response = getattr(exc, "response", None)
-                status = getattr(exc, "status_code", None) or getattr(exc, "code", None) or getattr(response, "status_code", None)
-                reason = "timeout_unknown" if isinstance(exc, TimeoutError) else "request_failed_unknown"
-                until = datetime.fromtimestamp(now,ZONE).replace(hour=0,minute=0,second=0,microsecond=0)+timedelta(days=1)
-                self.ledger["blocked_until"] = until.timestamp()
-                if status in (401,403):
-                    self.ledger["auth_block"] = True
-                    reason = "authentication_required"
-                elif status == 429:
-                    reason = "rate_limited"
-                    self.ledger["blocked_until"] = retry_deadline(exc,time.time())
-                self.ledger["pending"] = False
+                reason=self.apply_request_failure(exc,time.time())
                 await self.save()
                 await self.record(reason, slot=key, before=before)
                 self.notify("实时查询失败或结果未知，后续请求已暂停。请查看 Porsche 唤醒结果与集成状态。",reason)

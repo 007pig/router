@@ -25,6 +25,9 @@ request_once_at:
 refresh_report:
   name: 刷新本地效果面板
   description: 只读取已有日志和缓存，不发送车辆请求。
+evening_notification_test:
+  name: 测试晚间检查通知格式
+  description: 发送明确标注的模拟提醒，不查询车辆或修改车辆设置。
 notification_test:
   name: 测试 iPhone 通知
   description: 发送明确标注的测试通知，不唤醒车辆。
