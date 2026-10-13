@@ -92,10 +92,13 @@ class Runtime:
         target=None if getattr(self,'notification_disabled',False) else self.notification_target()
         status='待配置' if target is None else '接口已接受，送达需手机确认'
         if target:
+            notification_data={'url':'/porsche-wake/cayenne','tag':tag,'group':'porsche_wake'}
+            if kind=='evening' or kind.startswith('evening_test:'):
+                notification_data['push']={'interruption-level':'time-sensitive'}
             try:
                 async with asyncio.timeout(15):
                     await self.hass.services.async_call('notify',target,{'title':title,'message':message,
-                        'data':{'url':'/porsche-wake/cayenne','tag':tag,'group':'porsche_wake'}},blocking=True)
+                        'data':notification_data},blocking=True)
             except Exception:
                 status='手机推送失败'
                 persistent_notification.async_create(self.hass,'iPhone 推送失败，报告已保留在 HA 通知和面板。',

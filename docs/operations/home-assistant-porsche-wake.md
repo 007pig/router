@@ -214,6 +214,9 @@ automation 均 on；Direct Charging 仍 off。日常 01:00、03:00、05:00、07:
 - 缓存不足时最多追加一次受限实时按钮查询，然后给出最终结论。不启动第 2／10 分钟
   观察，不反复刷新。明确正常只记面板；未插枪、Direct、未知或失败合并成一条 HA＋iPhone 通知。
 - 文案包含实际检查时间、数据时间和人工检查建议；不切换 Direct、不修改 Departure Timer。
+- 按用户后续要求，晚间充电准备提醒及其格式测试使用 iOS Time Sensitive：
+  `data.push.interruption-level: time-sensitive`。晨间摘要及其他异常通知保持原等级，
+  不使用 Critical Alert；实际专注模式呈现取决于 iPhone 的时效性通知权限。
 
 ### 额度、去重与恢复
 
