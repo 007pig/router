@@ -109,6 +109,12 @@
             {
               "type": "attribute",
               "entity": "sensor.porsche_wake_evening_check",
+              "attribute": "control_label",
+              "name": "Direct 关闭结果"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_evening_check",
               "attribute": "notification_result",
               "name": "通知结果"
             },
@@ -117,6 +123,12 @@
               "entity": "sensor.porsche_wake_health",
               "attribute": "evening_attempts",
               "name": "今日晚间查询次数"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_health",
+              "attribute": "direct_off_attempts",
+              "name": "今日 Direct 关闭尝试"
             },
             {
               "type": "attribute",
@@ -170,7 +182,7 @@
         },
         {
           "type": "markdown",
-          "content": "异常和晨间摘要推送到已选 iPhone；普通成功、正常跳过不逐条通知。08:00 是本地核对基准，不修改车辆定时器。手机接口接受不代表实际送达。\n\n晚间检查有独立开关，不受夜间总开关控制。最多额外实时查询 1 次；夜间最多 4 次，全天合计最多 5 次。只提醒，不切换 Direct Charging。"
+          "content": "异常和晨间摘要推送到已选 iPhone；普通成功、正常跳过不逐条通知。08:00 是本地核对基准，不修改车辆定时器。手机接口接受不代表实际送达。\n\n晚间检查有独立开关。确认未插枪时提醒；确认已插枪且为 Direct 时，每天最多尝试关闭一次。成功静默，失败或结果未知提醒；普通状态不明只记录。关闭 Direct 可能停止直接充电，不等于保证定时器生效。状态查询仍为夜间最多 4 次＋晚间最多 1 次，关闭命令另计。"
         }
       ]
     }

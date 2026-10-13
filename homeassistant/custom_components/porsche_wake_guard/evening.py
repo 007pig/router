@@ -65,6 +65,11 @@ def check_window(now,when):
     return None
 
 
+def should_notify(result):
+    # Re-evaluate persisted v1.2 results rather than replaying old "unknown" reminders.
+    return result.get('plugged') is False or result.get('control_state') in ('failed','unknown')
+
+
 REASONS={
     'storage_unavailable':'持久化或日志不可用，未查询车辆',
     'request_busy':'其他车辆请求或观察尚未完成，未查询车辆',
@@ -83,13 +88,22 @@ REASONS={
 
 class Evening:
     def publish_evening(self):
+        from .direct_control import CONTROL_LABELS
+        job=self.ledger.get('evening_job',{})
+        control=job.get('direct_control',{})
+        if control.get('state') in ('closing','verifying'):
+            self.hass.states.async_set('sensor.porsche_wake_evening_check',CONTROL_LABELS[control['state']],{
+                'friendly_name':'Porsche 晚间充电准备','date':job['date'],'control_state':control['state'],
+                'control_label':CONTROL_LABELS[control['state']],'control':control,'notification_result':'处理中'})
+            return
         result=self.ledger.get('evening_result')
         if not result:
-            self.hass.states.async_set('sensor.porsche_wake_evening_check','等待晚间检查',{'friendly_name':'Porsche 晚间充电准备'})
+            self.hass.states.async_set('sensor.porsche_wake_evening_check','等待晚间检查',{'friendly_name':'Porsche 晚间充电准备','control_label':'未执行','control_state':'not_executed'})
             return
-        delivery=getattr(self,'meta',{}).get('notices',{}).get(result['date']+'|evening','待发送') if result['notify'] else '正常，不发送通知'
+        notify=should_notify(result)
+        delivery=getattr(self,'meta',{}).get('notices',{}).get(result['date']+'|evening','待发送') if notify else '本次无需通知'
         self.hass.states.async_set('sensor.porsche_wake_evening_check',result['label'],{
-            'friendly_name':'Porsche 晚间充电准备',**result,'notification_result':delivery})
+            'friendly_name':'Porsche 晚间充电准备','control_state':'not_executed','control_label':'未执行',**result,'notify':notify,'notification_result':delivery})
 
     async def evening_maintenance(self,now):
         self.publish_evening()
@@ -102,7 +116,7 @@ class Evening:
             self.evening_task=self.hass.async_create_background_task(self.recover_evening(),'porsche-evening-recovery')
             return
         last=self.ledger.get('evening_result')
-        if last and last['notify']:
+        if last and should_notify(last):
             if now<last['window_end']:
                 self.hass.async_create_background_task(self.send_notice(last['message'],'evening',last['date'],'Porsche 晚间充电检查'),'porsche-evening-notification')
         if self.value('input_boolean.porsche_wake_evening_enabled')!='on':return
@@ -114,6 +128,12 @@ class Evening:
         async with self.lock:
             job=self.ledger.get('evening_job')
             if not job:return
+            if job.get('direct_control',{}).get('state') in ('closing','verifying'):
+                job['direct_control'].update(state='unknown',reason='interrupted_request_unknown')
+            elif not job.get('direct_control'):
+                original=evaluate(job.get('before',{}),job.get('started',job['due']))
+                if original['plugged'] is True and original['direct'] is True:
+                    job['direct_control']={'state':'failed','command_sent':False,'reason':'interrupted_before_control'}
             await self.finish_evening(job,job.get('before',{}),reason='interrupted_request_unknown')
 
     async def perform_evening(self,date,due,end):
@@ -145,24 +165,42 @@ class Evening:
                     self.ledger.pop('pending_purpose',None)
                     await self.save()
                     sample=self.snapshot()
+            check=evaluate(sample,time.time())
+            if check['plugged'] is True and check['direct'] is True:
+                await self.disable_direct(job)
+                sample=self.snapshot()
             await self.finish_evening(job,sample,reason)
 
     async def finish_evening(self,job,sample,reason=None):
+        from .direct_control import CONTROL_LABELS,BLOCK_LABELS
         now=time.time();check=evaluate(sample,now)
         normal=check['normal'] and reason is None
+        control=job.get('direct_control',{'state':'not_executed','command_sent':False})
+        control_failed=control['state'] in ('failed','unknown')
+        notify=check['plugged'] is False or control_failed
         local=datetime.fromtimestamp(now,ZONE)
         message=[f"{job['date']} 晚间充电准备检查（实际检查 {local.strftime('%m-%d %H:%M:%S')} Dublin）"]
         if now-job['due']>90:message.append('这是本次计划的延迟补检。')
-        message.extend(check['reasons'] or ['已确认充电设备连接，且非 Direct Charging。'])
-        if reason:message.append(REASONS.get(reason,'检查未能完成，请手动确认。'))
+        if check['plugged'] is False:message.append('检测到充电枪未插入，请检查插枪。')
+        if control['state']=='confirmed':message.append('新车辆数据已确认关闭 Direct Charging；未修改 Departure Timer。')
+        elif control_failed:
+            if not control['command_sent']:message.append('未发送关闭命令：'+BLOCK_LABELS.get(control.get('reason'),'保护条件未满足'))
+            else:message.append('已尝试关闭 Direct Charging，但关闭失败或结果未知，请手动检查。')
+        elif normal:message.append('已确认连接且非 Direct，无需操作。')
+        elif check['plugged'] is not False:message.append('状态无法确认，未执行自动关闭；仅记录到面板。')
+        if reason:message.append(REASONS.get(reason,'本次查询未能完成。'))
         times=sample.get('measurement_timestamps',{})
         stamp=times.get('CHARGING_SUMMARY')
         message.append('充电模式测量时间：'+(datetime.fromtimestamp(stamp,ZONE).strftime('%m-%d %H:%M:%S') if stamp else '未知'))
-        message.append('系统只检查和提醒，未修改车辆设置。')
+        if control['state']!='not_executed':message.append('关闭 Direct 不等于确认 Departure Timer 已启用或能按时充电。')
+        label=('Direct 已确认关闭' if control['state']=='confirmed' else 'Direct 关闭失败或结果未知' if control_failed
+               else '未插充电枪，请检查' if check['plugged'] is False else '检查通过：已连接且非 Direct' if normal
+               else '状态无法确认，未执行关闭')
         result={'date':job['date'],'checked_at':local.isoformat(),'window_end':job['window_end'],
-                'label':'检查通过：已连接且非 Direct' if normal else '请检查晚间充电准备',
+                'label':label,'control_state':control['state'],'control_label':CONTROL_LABELS[control['state']],
+                'control':control,
                 'plugged':check['plugged'],'direct':check['direct'],'used_refresh':job['used_refresh'],
-                'reason':reason,'measurement_timestamps':times,'notify':not normal,'message':'\n'.join(message)}
+                'reason':reason,'measurement_timestamps':times,'notify':notify,'message':'\n'.join(message)}
         self.ledger['evening_result']=result
         self.ledger.pop('evening_job',None)
         await self.save()
@@ -172,5 +210,5 @@ class Evening:
             self.hass.async_create_background_task(self.send_notice(result['message'],'evening',job['date'],'Porsche 晚间充电检查'),'porsche-evening-notification')
 
     async def evening_notification_test(self,call):
-        await self.send_notice('【格式测试，不是车辆实际状态】\n检测到未插入充电枪，并且当前为 Direct Charging。请检查插枪及车辆充电模式。\n此测试未查询车辆、未修改车辆设置。',
+        await self.send_notice('【格式测试，不是车辆实际状态】\n检测到充电枪未插入，请检查插枪。\n只有确认已插枪且为 Direct 时才会尝试自动关闭；关闭成功静默，失败或结果未知会提醒。\n此测试未查询车辆、未修改车辆设置。',
             'evening_test:'+str(int(time.time())),title='Porsche 晚间充电检查 · 测试')

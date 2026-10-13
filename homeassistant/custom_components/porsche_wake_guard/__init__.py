@@ -23,6 +23,7 @@ from .policy import ZONE, decide, slot_key
 from .audit import Audit
 from .runtime import Runtime
 from .evening import Evening,NON_DIRECT_MODES
+from .direct_control import DirectControl,CAYENNE_DIRECT,capture_command_receipt
 
 DOMAIN = "porsche_wake_guard"
 RESULT_LABELS = {
@@ -136,7 +137,7 @@ async def async_setup(hass, config):
     return True
 
 
-class Guard(Runtime,Evening):
+class Guard(Runtime,Evening,DirectControl):
     def __init__(self, hass):
         self.hass = hass
         self.store = Store(hass, 1, DOMAIN, private=True, atomic_writes=True)
@@ -172,7 +173,10 @@ class Guard(Runtime,Evening):
                 self.ledger["blocked_until"] = max(time.time()+86400, self.ledger.get("blocked_until", 0))
                 purpose=self.ledger.pop('pending_purpose',None)
                 await self.store.async_save(self.ledger)
-                if purpose=='evening':
+                if purpose in ('evening','direct_off'):
+                    if purpose=='direct_off' and self.ledger.get('evening_job',{}).get('direct_control'):
+                        self.ledger['evening_job']['direct_control'].update(state='unknown',reason='interrupted_request_unknown')
+                        await self.store.async_save(self.ledger)
                     await self.record('evening_interrupted',purpose='evening_check')
                 else:
                     await self.record("interrupted_request_unknown")
@@ -351,6 +355,24 @@ class Guard(Runtime,Evening):
         if not self.snapshot().get('available'):
             raise HomeAssistantError('Vehicle real-time button is unavailable')
         button=self.value('input_text.porsche_wake_button_entity')
+        await self.protected_io(lambda:self.hass.services.async_call('button','press',{'entity_id':button},blocking=True))
+
+    async def direct_service_off(self):
+        if self.direct_target()!=CAYENNE_DIRECT:
+            raise HomeAssistantError('Direct stop target validation failed')
+        if self.vehicle is None:raise HomeAssistantError('Vehicle unavailable')
+        hooks=self.vehicle.connection.asyncClient.event_hooks['response']
+        if capture_command_receipt not in hooks:hooks.append(capture_command_receipt)
+        await self.protected_io(lambda:self.hass.services.async_call('switch','turn_off',{'entity_id':CAYENNE_DIRECT},blocking=True))
+
+    async def direct_cached_read(self):
+        if self.direct_target()!=CAYENNE_DIRECT:raise HomeAssistantError('Vehicle mapping changed')
+        self.snapshot()
+        if self.vehicle is None:raise HomeAssistantError('Vehicle unavailable')
+        await self.protected_io(self.vehicle.get_stored_overview,timeout=30)
+        self.coordinator.async_update_listeners()
+
+    async def protected_io(self,operation,timeout=300):
         if self.vehicle is not None:
             hooks=self.vehicle.connection.asyncClient.event_hooks['response']
             if stop_library_retry not in hooks:hooks.append(stop_library_retry)
@@ -359,8 +381,8 @@ class Guard(Runtime,Evening):
         logger.setLevel(logging.ERROR)
         failures=[];token=REQUEST_FAILURES.set(failures)
         try:
-            async with asyncio.timeout(300):
-                await self.hass.services.async_call('button','press',{'entity_id':button},blocking=True)
+            async with asyncio.timeout(timeout):
+                await operation()
             if failures:raise ObservedFailure(failures[0])
         finally:REQUEST_FAILURES.reset(token)
 

@@ -151,6 +151,7 @@ class Runtime:
                 'friendly_name':'Porsche 运行状态','next_slot':next_slot.isoformat() if next_slot and enabled else None,
                 'today_attempts':self.ledger.get('count',0) if self.ledger.get('date')==date else 0,
                 'evening_attempts':self.ledger.get('evening_count',0) if self.ledger.get('evening_date')==date else 0,
+                'direct_off_attempts':self.ledger.get('direct_off_count',0) if self.ledger.get('direct_off_date')==date else 0,
                 'total_attempts':sum(daily_counts(self.ledger,date)),
                 'vehicle_time':datetime.fromtimestamp(stamp,ZONE).isoformat() if stamp else None,
                 'data_age_minutes':round((now-stamp)/60,1) if stamp and stamp<=now else None,

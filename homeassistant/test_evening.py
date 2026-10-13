@@ -60,7 +60,7 @@ class EveningTest(unittest.IsolatedAsyncioTestCase):
         self.current.update(charging_status='charging_paused',power_kw=None,charging_mode=None)
         self.guard.ledger.update(date=self.date,count=4)
         await self.run_check();await self.run_check()
-        self.assertEqual(len(self.calls),1);self.assertEqual(len(self.notices),1)
+        self.assertEqual(len(self.calls),1);self.assertEqual(len(self.notices),0)
         self.assertEqual(daily_counts(self.guard.ledger,self.date),(4,1))
         self.assertNotIn('observation',self.guard.ledger)
 
@@ -92,11 +92,11 @@ class EveningTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(refresh_block(fields,self.sample,self.now),reason)
         self.assertEqual(refresh_block({},self.sample,self.now,True),'storage_unavailable')
 
-    async def test_blocked_check_notifies_without_query(self):
+    async def test_unknown_blocked_check_is_silent_without_query(self):
         self.current['charging_mode']=None
         self.guard.ledger['auth_block']=True
         await self.run_check()
-        self.assertEqual(self.calls,[]);self.assertEqual(len(self.notices),1)
+        self.assertEqual(self.calls,[]);self.assertEqual(len(self.notices),0)
 
     async def test_http_429_single_attempt_and_cooldown(self):
         self.current['charging_mode']=None
@@ -146,6 +146,7 @@ class EveningTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_phone_failure_does_not_repeat_vehicle_query(self):
         self.current['charging_mode']=None
+        self.after=dict(self.sample,charging_status='not_plugged',power_kw=0)
         self.guard.meta={'notices':{}};self.guard.meta_store=Store();self.guard.meta_lock=asyncio.Lock()
         original_value=self.guard.value
         self.guard.value=lambda key:'mobile_app_test' if key=='input_text.porsche_wake_notify_service' else original_value(key)

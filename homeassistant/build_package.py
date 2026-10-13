@@ -71,14 +71,16 @@ cards.insert(1,{'type':'entities','title':'状态与效果','entities':['sensor.
 cards.append({'type':'markdown','title':'当晚执行时间线','content':"{{ state_attr('sensor.porsche_wake_timeline','markdown') or '等待数据' }}"})
 cards.append({'type':'markdown','title':'最近一晚摘要','content':"{{ state_attr('sensor.porsche_wake_night_summary','message') or '等待晨间汇总' }}"})
 cards.append({'type':'entities','title':'晚间充电准备','entities':['input_boolean.porsche_wake_evening_enabled','input_datetime.porsche_wake_evening_time','sensor.porsche_wake_evening_check',
+    {'type':'attribute','entity':'sensor.porsche_wake_evening_check','attribute':'control_label','name':'Direct 关闭结果'},
     {'type':'attribute','entity':'sensor.porsche_wake_evening_check','attribute':'notification_result','name':'通知结果'},
     {'type':'attribute','entity':'sensor.porsche_wake_health','attribute':'evening_attempts','name':'今日晚间查询次数'},
+    {'type':'attribute','entity':'sensor.porsche_wake_health','attribute':'direct_off_attempts','name':'今日 Direct 关闭尝试'},
     {'type':'attribute','entity':'sensor.porsche_wake_health','attribute':'total_attempts','name':'今日实时请求总次数'}]})
 cards.append({'type':'markdown','content':"{{ state_attr('sensor.porsche_wake_evening_check','message') or '每日 20:00 检查；状态无法确认时最多查询一次。' }}"})
 dashboard['views'].append({'title':'设置与样本','path':'settings','cards':[
     maintenance,{'type':'entities','title':'通知与核对时间','entities':['input_text.porsche_wake_notify_service','input_datetime.porsche_wake_departure_time','input_datetime.porsche_wake_summary_time']},
     {'type':'entities','title':'确认有效充电夜（不确定时不要勾选）','entities':['input_datetime.porsche_wake_confirm_date','input_boolean.porsche_wake_confirm_plugged','input_boolean.porsche_wake_confirm_no_intervention','script.porsche_wake_confirm_night']},
-    {'type':'markdown','content':'异常和晨间摘要推送到已选 iPhone；普通成功、正常跳过不逐条通知。08:00 是本地核对基准，不修改车辆定时器。手机接口接受不代表实际送达。\n\n晚间检查有独立开关，不受夜间总开关控制。最多额外实时查询 1 次；夜间最多 4 次，全天合计最多 5 次。只提醒，不切换 Direct Charging。'}]})
+    {'type':'markdown','content':'异常和晨间摘要推送到已选 iPhone；普通成功、正常跳过不逐条通知。08:00 是本地核对基准，不修改车辆定时器。手机接口接受不代表实际送达。\n\n晚间检查有独立开关。确认未插枪时提醒；确认已插枪且为 Direct 时，每天最多尝试关闭一次。成功静默，失败或结果未知提醒；普通状态不明只记录。关闭 Direct 可能停止直接充电，不等于保证定时器生效。状态查询仍为夜间最多 4 次＋晚间最多 1 次，关闭命令另计。'}]})
 (root/"packages").mkdir(exist_ok=True)
 (root/"packages/porsche_wake.yaml").write_text(json.dumps(p,ensure_ascii=False,indent=2)+"\n")
 (root/"porsche_wake_dashboard.yaml").write_text(json.dumps(dashboard,ensure_ascii=False,indent=2)+"\n")
