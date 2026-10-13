@@ -125,6 +125,14 @@
       "name": "车辆测量时间戳传感器（不是 HA 更新时间）",
       "max": 255
     },
+    "porsche_wake_whatsapp_target": {
+      "name": "未插枪 WhatsApp 收件号码（E.164）",
+      "max": 32
+    },
+    "porsche_wake_whatsapp_account": {
+      "name": "WhatsApp 账号 Entry ID",
+      "max": 255
+    },
     "porsche_wake_notify_service": {
       "name": "iPhone 通知服务",
       "max": 255

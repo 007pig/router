@@ -50,7 +50,7 @@ class DirectControlTest(unittest.IsolatedAsyncioTestCase):
             task=asyncio.create_task(coro);self.tasks.append(task);return task
         self.guard.hass.async_create_background_task=background
         async def notice(*a,**k):self.notices.append(a)
-        self.guard.send_notice=notice
+        self.guard.send_evening_notice=notice
 
     def make_off(self):
         self.current.update(charging_mode='PROFILE',direct_switch='off',charging_status='charging_paused',power_kw=0)
@@ -101,17 +101,17 @@ class DirectControlTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.guard.ledger['direct_off_count'],1)
         self.assertEqual(self.guard.ledger['count'],0)
 
-    async def test_returned_but_unchanged_is_unknown_with_one_notification(self):
+    async def test_returned_but_unchanged_is_unknown_without_notification(self):
         self.outcome='unchanged'
         r=await self.run_check()
         self.assertEqual(r['control_state'],'unknown');self.assertEqual(self.cached,2)
-        self.assertEqual(len(self.notices),1);self.assertEqual(len(self.commands),1)
+        self.assertEqual(len(self.notices),0);self.assertEqual(len(self.commands),1)
 
     async def test_explicit_rejection_is_failure(self):
         self.outcome='rejected'
         r=await self.run_check()
         self.assertEqual(r['control_state'],'failed');self.assertEqual(self.cached,0)
-        self.assertEqual(len(self.notices),1)
+        self.assertEqual(len(self.notices),0)
 
     async def test_timeout_auth_and_rate_limit_do_not_retry(self):
         for outcome in ('timeout','auth','limit'):
@@ -120,7 +120,7 @@ class DirectControlTest(unittest.IsolatedAsyncioTestCase):
                 self.outcome=outcome;self.commands.clear();self.notices.clear();self.tasks.clear()
                 r=await self.run_check()
                 self.assertEqual(r['control_state'],'unknown');self.assertEqual(len(self.commands),1)
-                self.assertEqual(len(self.notices),1)
+                self.assertEqual(len(self.notices),0)
                 if outcome=='auth':self.assertTrue(self.guard.ledger['auth_block'])
                 if outcome=='limit':self.assertGreaterEqual(self.guard.ledger['blocked_until'],self.clock+172800)
 
@@ -162,7 +162,7 @@ class DirectControlTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(g.time,'time',side_effect=lambda:self.clock):
             await self.guard.load();await self.guard.recover_evening()
         self.assertEqual(self.commands,[]);self.assertEqual(self.guard.ledger['evening_result']['control_state'],'unknown')
-        self.assertTrue(self.guard.ledger['evening_result']['notify'])
+        self.assertFalse(self.guard.ledger['evening_result']['notify'])
 
     async def test_restart_during_verification_is_unknown_without_new_reads(self):
         self.guard.ledger['evening_job']={'date':'2026-10-13','due':self.start,'window_end':self.start+3600,
@@ -176,7 +176,7 @@ class DirectControlTest(unittest.IsolatedAsyncioTestCase):
             'started':self.start,'before':self.current,'used_refresh':False}
         with patch.object(g.time,'time',side_effect=lambda:self.clock):await self.guard.recover_evening()
         result=self.guard.ledger['evening_result']
-        self.assertEqual(result['control_state'],'failed');self.assertTrue(result['notify'])
+        self.assertEqual(result['control_state'],'failed');self.assertFalse(result['notify'])
         self.assertFalse(result['control']['command_sent']);self.assertEqual(self.commands,[])
 
     async def test_old_unknown_notification_is_not_replayed(self):

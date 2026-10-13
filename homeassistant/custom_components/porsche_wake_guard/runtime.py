@@ -12,7 +12,9 @@ from .evidence import classify,night_report,epoch
 DOMAIN='porsche_wake_guard'
 
 
-class Runtime:
+from .evening_notifications import EveningNotifications
+
+class Runtime(EveningNotifications):
     async def runtime_start(self,event=None):
         from homeassistant.helpers.event import async_track_time_interval
         self.meta_store=Store(self.hass,1,DOMAIN+'_reports',private=True,atomic_writes=True)
@@ -25,6 +27,8 @@ class Runtime:
             self.meta['notification_disabled']=True
             self.meta['settings_initialized']=True
             persistent_notification.async_create(self.hass,'通知去重记录不可用，手机推送已暂停；车辆唤醒规则保持。请检查持久化文件。',title='Porsche 通知状态异常',notification_id=DOMAIN+'_notification_storage')
+        self.meta.setdefault('evening_channel_cutover',time.time())
+        await self.meta_store.async_save(self.meta)
         self.meta_lock=asyncio.Lock()
         self.maintenance_lock=asyncio.Lock()
         if not self.meta.get('settings_initialized'):
@@ -228,5 +232,6 @@ class Runtime:
                 async with self.meta_lock:
                     self.meta['pruned']=date
                     await self.meta_store.async_save(self.meta)
+            self.publish_whatsapp()
             if allow_evening:await self.evening_maintenance(now)
             else:self.publish_evening()

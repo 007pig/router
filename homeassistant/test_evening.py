@@ -25,7 +25,7 @@ class EveningTest(unittest.IsolatedAsyncioTestCase):
             task=asyncio.create_task(coro);self.tasks.append(task);return task
         self.guard.hass.async_create_background_task=background
         async def notice(*a,**k):self.notices.append((a,k))
-        self.guard.send_notice=notice
+        self.guard.send_evening_notice=notice
         self.after=None;self.error=None
         async def press(*args,**kwargs):
             self.calls.append(args)
@@ -157,7 +157,8 @@ class EveningTest(unittest.IsolatedAsyncioTestCase):
             if a[0]=='notify':mobile.append(1);raise TimeoutError()
             return await press(*a,**kw)
         self.guard.hass.services.async_call=call
-        del self.guard.send_notice
+        del self.guard.send_evening_notice
+        self.guard.meta['evening_channel_cutover']=0
         await self.run_check();await self.run_check()
         self.assertEqual(len(self.calls),1);self.assertEqual(mobile,[1])
         self.assertEqual(self.guard.meta['delivery'],'手机推送失败')
