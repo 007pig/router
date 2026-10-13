@@ -20,6 +20,8 @@ from homeassistant.components import persistent_notification
 from homeassistant.exceptions import HomeAssistantError
 
 from .policy import ZONE, decide, slot_key
+from .validation import Validation
+from .mode_evidence import mode_evidence
 from .audit import Audit
 from .runtime import Runtime
 from .evening import Evening,NON_DIRECT_MODES
@@ -130,6 +132,8 @@ async def async_setup(hass, config):
     hass.services.async_register(DOMAIN,"evening_notification_test",guard.evening_notification_test,schema=vol.Schema({}))
     hass.services.async_register(DOMAIN,"confirm_night",guard.confirm_night,schema=vol.Schema({
         vol.Required("date"):str,vol.Required("plugged"):cv.boolean,vol.Required("no_intervention"):cv.boolean}))
+    hass.services.async_register(DOMAIN,'schedule_validation',guard.schedule_validation,schema=vol.Schema({vol.Required('at'):str}))
+    hass.services.async_register(DOMAIN,'cancel_validation',guard.cancel_validation,schema=vol.Schema({}))
     if hass.is_running:
         await guard.runtime_start()
     else:
@@ -137,7 +141,7 @@ async def async_setup(hass, config):
     return True
 
 
-class Guard(Runtime,Evening,DirectControl):
+class Guard(Runtime,Evening,DirectControl,Validation):
     def __init__(self, hass):
         self.hass = hass
         self.store = Store(hass, 1, DOMAIN, private=True, atomic_writes=True)
@@ -173,7 +177,11 @@ class Guard(Runtime,Evening,DirectControl):
                 self.ledger["blocked_until"] = max(time.time()+86400, self.ledger.get("blocked_until", 0))
                 purpose=self.ledger.pop('pending_purpose',None)
                 await self.store.async_save(self.ledger)
-                if purpose in ('evening','direct_off'):
+                if purpose=='validation':
+                    if self.ledger.get('validation'):self.ledger['validation'].update(status='unknown',notify=False,reason='interrupted_request_unknown')
+                    await self.store.async_save(self.ledger)
+                    await self.record('validation_interrupted',purpose='validation')
+                elif purpose in ('evening','direct_off'):
                     if purpose=='direct_off' and self.ledger.get('evening_job',{}).get('direct_control'):
                         self.ledger['evening_job']['direct_control'].update(state='unknown',reason='interrupted_request_unknown')
                         await self.store.async_save(self.ledger)
@@ -225,7 +233,7 @@ class Guard(Runtime,Evening,DirectControl):
             self.notify("无法写入唤醒审计记录，已停止发送请求。")
             raise
         self.rows.append(row)
-        if attrs.get('purpose')!='evening_check':
+        if attrs.get('purpose') not in ('evening_check','validation'):
             self.last_recorded=row['utc']
             self.publish(result, **attrs)
 
@@ -271,6 +279,7 @@ class Guard(Runtime,Evening,DirectControl):
         metadata = []
         vehicle_times = {}
         mode=None
+        mode_details=mode_evidence({},NON_DIRECT_MODES|{'DIRECT'})
         direct_switch='unavailable'
         self.vehicle = None
         self.coordinator = None
@@ -283,8 +292,8 @@ class Guard(Runtime,Evening,DirectControl):
                     for measurement in getattr(vehicle,"status",{}).get("measurements",[]):
                         if measurement.get("key") in ("BATTERY_LEVEL","CHARGING_SUMMARY","CHARGING_RATE","CHARGING_SETTINGS"):
                             if measurement['key']=='CHARGING_SUMMARY':
-                                raw_mode=measurement.get('value',{}).get('mode')
-                                if isinstance(raw_mode,str) and raw_mode.upper() in NON_DIRECT_MODES|{'DIRECT'}:mode=raw_mode.upper()
+                                mode_details=mode_evidence(measurement.get('value',{}),NON_DIRECT_MODES|{'DIRECT'})
+                                mode=mode_details['charging_mode']
                             if measurement["key"] == "CHARGING_RATE":
                                 values=measurement.get('value',{})
                                 for field in ('chargingPowerkW','chargingPower'):
@@ -323,7 +332,7 @@ class Guard(Runtime,Evening,DirectControl):
                     soc=numeric(mapped("soc")), plugged=connected,
                     charging=True if not contradictory and status in ('charging','instant_charging') and power is not None and power>0.1 else None,
                     contradictory=contradictory,
-                    charging_mode=mode,direct_switch=direct_switch,
+                    **mode_details,direct_switch=direct_switch,
                     plugged_timestamp=vehicle_times.get('CHARGING_SUMMARY') if status=='not_plugged' else None,
                     charging_status=status if status in {"charging", "charging_paused", "charging_stopped", "charging_completed", "charging_error", "initialising", "instant_charging", "not_charging", "not_plugged", "off", "on", "unknown", "unavailable"} else "other",
                     power_kw=power, power_source=power_source, vehicle_timestamp=stamp, measurement_timestamps=vehicle_times,

@@ -6,7 +6,7 @@ from pathlib import Path
 from datetime import datetime,timedelta,timezone
 from homeassistant.helpers.storage import Store
 from homeassistant.components import persistent_notification
-from .policy import ZONE,daily_counts
+from .policy import ZONE,daily_counts,total_requests
 from .evidence import classify,night_report,epoch
 
 DOMAIN='porsche_wake_guard'
@@ -51,7 +51,7 @@ class Runtime(EveningNotifications):
             self.failed=True
             self.notify('审计日志无法读取，已停止唤醒。请检查日志文件。','audit_unreadable')
             return
-        night_rows=[r for r in self.rows if r.get('purpose')!='evening_check']
+        night_rows=[r for r in self.rows if r.get('purpose') not in ('evening_check','validation')]
         if night_rows:
             last=night_rows[-1];self.last_recorded=last['utc']
             self.publish(last['result'],**{k:v for k,v in last.items() if k not in ('utc','vehicle','result','request_id')})
@@ -97,7 +97,7 @@ class Runtime(EveningNotifications):
         status='待配置' if target is None else '接口已接受，送达需手机确认'
         if target:
             notification_data={'url':'/porsche-wake/cayenne','tag':tag,'group':'porsche_wake'}
-            if kind=='evening' or kind.startswith('evening_test:'):
+            if kind=='evening' or kind.startswith(('evening_test:','validation:')):
                 notification_data['push']={'interruption-level':'time-sensitive'}
             try:
                 async with asyncio.timeout(15):
@@ -139,6 +139,13 @@ class Runtime(EveningNotifications):
         async with self.maintenance_lock:
             now=time.time();local=datetime.fromtimestamp(now,ZONE);date=local.date().isoformat()
             snapshot=self.snapshot();self.publish_power(snapshot)
+            from .evening import evaluate
+            from .mode_evidence import describe
+            current=describe(snapshot,evaluate(snapshot,now))
+            self.hass.states.async_set('sensor.porsche_wake_charging_evidence',current['plugged_label'],{
+                'friendly_name':'Porsche 当前充电判断',**current,'measurement_timestamps':snapshot.get('measurement_timestamps'),
+                'charging_mode_present':snapshot.get('charging_mode_present'),'charging_mode_redacted':snapshot.get('charging_mode_redacted'),
+                'note':'只读取现有缓存，不查询车辆；与晚间历史结果分开'})
             if self.last_recorded:
                 state=self.hass.states.get('sensor.porsche_wake_result')
                 if state:
@@ -156,7 +163,7 @@ class Runtime(EveningNotifications):
                 'today_attempts':self.ledger.get('count',0) if self.ledger.get('date')==date else 0,
                 'evening_attempts':self.ledger.get('evening_count',0) if self.ledger.get('evening_date')==date else 0,
                 'direct_off_attempts':self.ledger.get('direct_off_count',0) if self.ledger.get('direct_off_date')==date else 0,
-                'total_attempts':sum(daily_counts(self.ledger,date)),
+                'total_attempts':total_requests(self.ledger,date),
                 'vehicle_time':datetime.fromtimestamp(stamp,ZONE).isoformat() if stamp else None,
                 'data_age_minutes':round((now-stamp)/60,1) if stamp and stamp<=now else None,
                 'pause_reason':pause,'observation_in_progress':bool(self.ledger.get('observation'))})
@@ -233,5 +240,9 @@ class Runtime(EveningNotifications):
                     self.meta['pruned']=date
                     await self.meta_store.async_save(self.meta)
             self.publish_whatsapp()
-            if allow_evening:await self.evening_maintenance(now)
-            else:self.publish_evening()
+            if allow_evening:
+                await self.validation_maintenance(now)
+                await self.evening_maintenance(now)
+            else:
+                self.publish_validation()
+                self.publish_evening()

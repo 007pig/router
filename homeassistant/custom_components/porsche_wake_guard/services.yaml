@@ -48,3 +48,16 @@ confirm_night:
       required: true
       selector:
         boolean:
+
+schedule_validation:
+  name: 安排一次性只读验收
+  description: 使用带时区的未来时间；只查询状态，绝不控制车辆。
+  fields:
+    at:
+      required: true
+      example: "2026-10-14T08:20:00+01:00"
+      selector:
+        text:
+cancel_validation:
+  name: 取消一次性验收
+  description: 取消尚未开始的验收，不清除计数或去重记录。

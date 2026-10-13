@@ -219,5 +219,11 @@ class DirectControlTest(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('secret',str(caught.exception))
         finally:COMMAND_RECEIPTS.reset(token)
 
+    async def test_inferred_connection_never_authorizes_direct_stop(self):
+        for state in ('charging','instant_charging','charging_paused','charging_completed'):
+            self.current.update(charging_status=state,power_kw=None)
+            self.assertEqual(self.guard.control_block(self.current,self.clock,self.start+3600),'evidence')
+        self.assertEqual(self.commands,[])
+
 
 if __name__=='__main__':unittest.main()

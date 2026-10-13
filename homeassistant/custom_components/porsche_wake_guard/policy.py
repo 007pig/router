@@ -10,6 +10,10 @@ def daily_counts(ledger,date):
             ledger.get('evening_count',0) if ledger.get('evening_date')==date else 0)
 
 
+def total_requests(ledger,date):
+    return sum(daily_counts(ledger,date))+(ledger.get('validation_count',0) if ledger.get('validation_date')==date else 0)
+
+
 def slot_key(now, times, manual=False):
     local = datetime.fromtimestamp(now, ZONE)
     minute = local.strftime("%H:%M")
@@ -34,7 +38,7 @@ def decide(now, key, ledger, snapshot, target, interval, limit):
     night,evening=daily_counts(ledger,date)
     if night >= min(4, limit):
         return "daily_limit"
-    if night+evening>=5:return 'total_daily_limit'
+    if total_requests(ledger,date)>=5:return 'total_daily_limit'
     if not snapshot.get("available"):
         return "button_unavailable"
     if one_off:

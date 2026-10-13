@@ -54,7 +54,7 @@ def classify(rows):
 
 
 def night_report(rows,date,departure='08:00',target=100,expected=()):
-    rows=[r for r in rows if r.get('purpose')!='evening_check']
+    rows=[r for r in rows if r.get('purpose') not in ('evening_check','validation')]
     groups={}
     for r in rows:
         slot=r.get('slot','')

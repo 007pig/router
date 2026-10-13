@@ -109,6 +109,24 @@
             {
               "type": "attribute",
               "entity": "sensor.porsche_wake_evening_check",
+              "attribute": "plugged_label",
+              "name": "检查时连接判断"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_evening_check",
+              "attribute": "charging_label",
+              "name": "检查时充电状态"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_evening_check",
+              "attribute": "direct_label",
+              "name": "检查时 Direct 判断"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_evening_check",
               "attribute": "control_label",
               "name": "Direct 关闭结果"
             },
@@ -145,8 +163,161 @@
           ]
         },
         {
+          "type": "entities",
+          "title": "当前缓存证据（不额外查询）",
+          "entities": [
+            "sensor.porsche_wake_charging_evidence",
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_charging_evidence",
+              "attribute": "charging_label",
+              "name": "具体充电状态"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_charging_evidence",
+              "attribute": "direct_label",
+              "name": "Direct 判断"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_charging_evidence",
+              "attribute": "charging_mode_raw",
+              "name": "原始 mode（安全枚举）"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_charging_evidence",
+              "attribute": "charging_mode_type",
+              "name": "mode 数据类型"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_charging_evidence",
+              "attribute": "charging_mode_filtered",
+              "name": "是否被白名单过滤"
+            }
+          ]
+        },
+        {
           "type": "markdown",
           "content": "{{ state_attr('sensor.porsche_wake_evening_check','message') or '每日 20:00 检查；状态无法确认时最多查询一次。' }}"
+        },
+        {
+          "type": "entities",
+          "title": "一次性只读验收",
+          "entities": [
+            "sensor.porsche_wake_validation",
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_validation",
+              "attribute": "id",
+              "name": "计划时间"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_validation",
+              "attribute": "before_status",
+              "name": "查询前状态"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_validation",
+              "attribute": "after_status",
+              "name": "查询后状态"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_validation",
+              "attribute": "before_measured_at",
+              "name": "查询前测量时间"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_validation",
+              "attribute": "after_measured_at",
+              "name": "查询后测量时间"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_validation",
+              "attribute": "finished",
+              "name": "完成时间"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_validation",
+              "attribute": "used_refresh",
+              "name": "使用实时查询"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_validation",
+              "attribute": "data_age_minutes",
+              "name": "判定时数据年龄（分钟）"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_validation",
+              "attribute": "reason_text",
+              "name": "保护原因"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_validation",
+              "attribute": "vehicle_response",
+              "name": "车辆响应证据"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_validation",
+              "attribute": "plugged_label",
+              "name": "连接判断"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_validation",
+              "attribute": "charging_label",
+              "name": "具体充电状态"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_validation",
+              "attribute": "direct_label",
+              "name": "模式判断"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_validation",
+              "attribute": "charging_mode_raw",
+              "name": "原始模式"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_validation",
+              "attribute": "iphone_result",
+              "name": "iPhone 结果"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_validation",
+              "attribute": "whatsapp_result",
+              "name": "WhatsApp 结果"
+            }
+          ],
+          "footer": {
+            "type": "buttons",
+            "entities": [
+              {
+                "entity": "sensor.porsche_wake_validation",
+                "name": "取消待执行验收",
+                "tap_action": {
+                  "action": "call-service",
+                  "service": "porsche_wake_guard.cancel_validation"
+                }
+              }
+            ]
+          }
         }
       ]
     },

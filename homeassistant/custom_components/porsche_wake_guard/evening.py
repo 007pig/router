@@ -2,9 +2,12 @@
 import math
 import time
 from datetime import datetime,timedelta
-from .policy import ZONE,daily_counts
+from .policy import ZONE,daily_counts,total_requests
+from .mode_evidence import describe
 
-NON_DIRECT_MODES={'PROFILE','TIMER','TIMERS','DEPARTURE','DEPARTURES','SCHEDULED'}
+CONNECTED_STATES={'charging','instant_charging','charging_paused','charging_completed'}
+
+NON_DIRECT_MODES={'PROFILE','TIMER','TIMERS','DEPARTURE','DEPARTURES','SCHEDULED','CYCLIC_DEPARTURE'}
 
 
 def fresh_at(stamp,now):
@@ -20,26 +23,36 @@ def evaluate(sample,now):
     active=sample.get('charging_status') in ('charging','instant_charging')
     disconnected=sample.get('charging_status')=='not_plugged'
     plugged=None
-    if sample.get('plugged') in (True,False) and fresh_at(sample.get('plugged_timestamp'),now):
+    if type(sample.get('plugged')) is bool and fresh_at(sample.get('plugged_timestamp'),now):
         plugged=sample['plugged']
     if summary_fresh and disconnected:plugged=False
     if summary_fresh and power_fresh and active and positive:plugged=True
-    if sample.get('contradictory') or (summary_fresh and power_fresh and disconnected and positive):plugged=None
+    explicit=sample.get('plugged') if type(sample.get('plugged')) is bool and fresh_at(sample.get('plugged_timestamp'),now) else None
+    conflict=bool(sample.get('contradictory') or (summary_fresh and power_fresh and disconnected and positive)
+                  or (explicit is True and summary_fresh and disconnected)
+                  or (explicit is False and summary_fresh and sample.get('charging_status') in CONNECTED_STATES)
+                  or (summary_fresh and sample.get('charging_status') in ('charging_paused','charging_completed') and positive))
+    if conflict:plugged=None
     mode=sample.get('charging_mode')
     switch=sample.get('direct_switch')
     direct=None
     if summary_fresh and mode=='DIRECT' and switch=='on':direct=True
     if summary_fresh and mode in NON_DIRECT_MODES and switch=='off':direct=False
+    inferred=(summary_fresh and sample.get('charging_status') in CONNECTED_STATES
+              and plugged is None and not conflict)
     reasons=[]
     if plugged is False:reasons.append('检测到充电枪未插入，请检查插枪。')
+    elif inferred:reasons.append('依据新鲜充电状态推断已连接；具体充电状态单独显示。')
     elif plugged is None:reasons.append('无法确认充电枪是否插入，请手动确认。')
     if direct is True:reasons.append('当前为 Direct Charging，请检查车辆充电模式。')
     elif direct is None:reasons.append('无法确认充电模式，请手动确认是否为定时充电。')
-    return {'plugged':plugged,'direct':direct,'needs_refresh':plugged is None or direct is None,
+    return {'plugged':plugged,'plugged_inferred':inferred,'summary_fresh':summary_fresh,
+            'data_age_minutes':round((now-times['CHARGING_SUMMARY'])/60,1) if isinstance(times.get('CHARGING_SUMMARY'),(int,float)) and math.isfinite(times['CHARGING_SUMMARY']) and times['CHARGING_SUMMARY']<=now else None,
+            'direct':direct,'needs_refresh':plugged is not False and ((plugged is None and not inferred) or direct is None),
             'normal':plugged is True and direct is False,'reasons':reasons}
 
 
-def refresh_block(ledger,sample,now,failed=False):
+def refresh_block(ledger,sample,now,failed=False,purpose='evening'):
     if failed:return 'storage_unavailable'
     if ledger.get('pending') or ledger.get('observation'):return 'request_busy'
     if ledger.get('auth_block'):return 'authentication_required'
@@ -47,8 +60,8 @@ def refresh_block(ledger,sample,now,failed=False):
     if now-ledger.get('last_attempt',0)<7200:return 'minimum_interval'
     date=datetime.fromtimestamp(now,ZONE).date().isoformat()
     night,evening=daily_counts(ledger,date)
-    if evening>=1:return 'evening_limit'
-    if night+evening>=5:return 'total_daily_limit'
+    if purpose=='evening' and evening>=1:return 'evening_limit'
+    if total_requests(ledger,date)>=5:return 'total_daily_limit'
     if not sample.get('available'):return 'button_unavailable'
     return None
 
@@ -100,6 +113,19 @@ class Evening:
         if not result:
             self.hass.states.async_set('sensor.porsche_wake_evening_check','等待晚间检查',{'friendly_name':'Porsche 晚间充电准备','control_label':'未执行','control_state':'not_executed'})
             return
+        # Re-render old check evidence at its original check time, never as a live reading.
+        sample=result.get('snapshot')
+        if sample is None:
+            rows=getattr(self,'rows',[])
+            sample=next((r.get('after') for r in reversed(rows) if r.get('result')=='evening_check_complete' and r.get('evening_date')==result['date']),None)
+        display={}
+        if sample:
+            check=evaluate(sample,datetime.fromisoformat(result['checked_at']).timestamp())
+            display=describe(sample,check)
+            if check['plugged_inferred'] and result.get('control_state','not_executed')=='not_executed':
+                display['label']=display['plugged_label']+' · '+display['charging_label']
+                display['message']=display['plugged_label']+'；'+display['charging_label']+'。'+display['direct_label']+'。'+display['inference_note']+'。\n检查时间：'+result['checked_at']
+        result={**result,**display}
         notify=should_notify(result)
         delivery=getattr(self,'meta',{}).get('notices',{}).get(result['date']+'|evening','待发送') if notify else '本次无需通知'
         self.hass.states.async_set('sensor.porsche_wake_evening_check',result['label'],{
@@ -186,8 +212,11 @@ class Evening:
         elif control_failed:
             if not control['command_sent']:message.append('未发送关闭命令：'+BLOCK_LABELS.get(control.get('reason'),'保护条件未满足'))
             else:message.append('已尝试关闭 Direct Charging，但关闭失败或结果未知，请手动检查。')
+        elif check['plugged_inferred']:message.append('推断已连接；'+describe(sample,check)['charging_label']+'。')
         elif normal:message.append('已确认连接且非 Direct，无需操作。')
         elif check['plugged'] is not False:message.append('状态无法确认，未执行自动关闭；仅记录到面板。')
+        details=describe(sample,check)
+        message.append(details['direct_label'])
         if reason:message.append(REASONS.get(reason,'本次查询未能完成。'))
         times=sample.get('measurement_timestamps',{})
         stamp=times.get('CHARGING_SUMMARY')
@@ -195,10 +224,11 @@ class Evening:
         if control['state']!='not_executed':message.append('关闭 Direct 不等于确认 Departure Timer 已启用或能按时充电。')
         label=('Direct 已确认关闭' if control['state']=='confirmed' else 'Direct 关闭失败或结果未知' if control_failed
                else '未插充电枪，请检查' if check['plugged'] is False else '检查通过：已连接且非 Direct' if normal
-               else '状态无法确认，未执行关闭')
+               else details['plugged_label']+' · '+details['charging_label'] if check['plugged_inferred'] else '状态无法确认，未执行关闭')
         result={'date':job['date'],'checked_at':local.isoformat(),'window_end':job['window_end'],
                 'label':label,'control_state':control['state'],'control_label':CONTROL_LABELS[control['state']],
-                'control':control,
+                'control':control,'snapshot':sample,**details,
+                'plugged_inferred':check['plugged_inferred'],
                 'plugged':check['plugged'],'direct':check['direct'],'used_refresh':job['used_refresh'],
                 'reason':reason,'measurement_timestamps':times,'notify':notify,'message':'\n'.join(message)}
         self.ledger['evening_result']=result

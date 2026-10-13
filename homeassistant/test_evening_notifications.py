@@ -58,3 +58,17 @@ class Notifications(unittest.IsolatedAsyncioTestCase):
     def test_message_excludes_control_failures(self):
         message=unplugged_message(dict(self.r,message='Direct 关闭失败',control_state='failed'))
         self.assertIn('尚未插入充电枪',message);self.assertNotIn('Direct',message)
+
+    async def test_validation_notification_dedup_and_evening_independence(self):
+        from test_guard import g
+        job={'id':'2026-10-14T08:20:00+01:00','date':'2026-10-14','due':1791962400,
+             'status':'unplugged','notify':True,'finished':'2026-10-14T08:20:30+01:00',
+             'after':{'measurement_timestamps':{'CHARGING_SUMMARY':1791962420}}}
+        self.failure='notify'
+        await g.Guard.validation_notice(self.g,job)
+        await g.Guard.validation_notice(self.g,job)
+        self.assertEqual([c[0] for c in self.calls],['notify','whatsapp'])
+        self.assertEqual(self.calls[0][2]['data']['push']['interruption-level'],'time-sensitive')
+        self.assertNotIn('2026-10-14|evening',self.g.meta['notices'])
+        await self.g.send_notice('evening','evening','2026-10-14')
+        self.assertEqual(len(self.calls),3)

@@ -66,6 +66,7 @@ class DirectControl:
         date=datetime.fromtimestamp(now,ZONE).date().isoformat()
         if not reserved and self.ledger.get('direct_off_date')==date and self.ledger.get('direct_off_count',0)>=1:return 'limit'
         if self.direct_target()!=CAYENNE_DIRECT:return 'target'
+        if sample.get('direct_switch')!='on':return 'evidence'
         check=evaluate(sample,now)
         if not sample.get('available') or check['plugged'] is not True or check['direct'] is not True:return 'evidence'
         return None

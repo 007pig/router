@@ -73,13 +73,25 @@ cards.insert(1,{'type':'entities','title':'状态与效果','entities':['sensor.
 cards.append({'type':'markdown','title':'当晚执行时间线','content':"{{ state_attr('sensor.porsche_wake_timeline','markdown') or '等待数据' }}"})
 cards.append({'type':'markdown','title':'最近一晚摘要','content':"{{ state_attr('sensor.porsche_wake_night_summary','message') or '等待晨间汇总' }}"})
 cards.append({'type':'entities','title':'晚间充电准备','entities':['input_boolean.porsche_wake_evening_enabled','input_datetime.porsche_wake_evening_time','sensor.porsche_wake_evening_check',
+    {'type':'attribute','entity':'sensor.porsche_wake_evening_check','attribute':'plugged_label','name':'检查时连接判断'},
+    {'type':'attribute','entity':'sensor.porsche_wake_evening_check','attribute':'charging_label','name':'检查时充电状态'},
+    {'type':'attribute','entity':'sensor.porsche_wake_evening_check','attribute':'direct_label','name':'检查时 Direct 判断'},
     {'type':'attribute','entity':'sensor.porsche_wake_evening_check','attribute':'control_label','name':'Direct 关闭结果'},
     {'type':'attribute','entity':'sensor.porsche_wake_evening_check','attribute':'notification_result','name':'iPhone 通知结果'},
     {'type':'attribute','entity':'sensor.porsche_wake_evening_check','attribute':'whatsapp_result','name':'WhatsApp 通知结果'},
     {'type':'attribute','entity':'sensor.porsche_wake_health','attribute':'evening_attempts','name':'今日晚间查询次数'},
     {'type':'attribute','entity':'sensor.porsche_wake_health','attribute':'direct_off_attempts','name':'今日 Direct 关闭尝试'},
     {'type':'attribute','entity':'sensor.porsche_wake_health','attribute':'total_attempts','name':'今日实时请求总次数'}]})
+cards.append({'type':'entities','title':'当前缓存证据（不额外查询）','entities':['sensor.porsche_wake_charging_evidence',
+    {'type':'attribute','entity':'sensor.porsche_wake_charging_evidence','attribute':'charging_label','name':'具体充电状态'},
+    {'type':'attribute','entity':'sensor.porsche_wake_charging_evidence','attribute':'direct_label','name':'Direct 判断'},
+    {'type':'attribute','entity':'sensor.porsche_wake_charging_evidence','attribute':'charging_mode_raw','name':'原始 mode（安全枚举）'},
+    {'type':'attribute','entity':'sensor.porsche_wake_charging_evidence','attribute':'charging_mode_type','name':'mode 数据类型'},
+    {'type':'attribute','entity':'sensor.porsche_wake_charging_evidence','attribute':'charging_mode_filtered','name':'是否被白名单过滤'}]})
 cards.append({'type':'markdown','content':"{{ state_attr('sensor.porsche_wake_evening_check','message') or '每日 20:00 检查；状态无法确认时最多查询一次。' }}"})
+cards.append({'type':'entities','title':'一次性只读验收','entities':['sensor.porsche_wake_validation',
+    *[{'type':'attribute','entity':'sensor.porsche_wake_validation','attribute':key,'name':name} for key,name in [('id','计划时间'),('before_status','查询前状态'),('after_status','查询后状态'),('before_measured_at','查询前测量时间'),('after_measured_at','查询后测量时间'),('finished','完成时间'),('used_refresh','使用实时查询'),('data_age_minutes','判定时数据年龄（分钟）'),('reason_text','保护原因'),('vehicle_response','车辆响应证据'),('plugged_label','连接判断'),('charging_label','具体充电状态'),('direct_label','模式判断'),('charging_mode_raw','原始模式'),('iphone_result','iPhone 结果'),('whatsapp_result','WhatsApp 结果')]]],
+    'footer':{'type':'buttons','entities':[{'entity':'sensor.porsche_wake_validation','name':'取消待执行验收','tap_action':{'action':'call-service','service':'porsche_wake_guard.cancel_validation'}}]}})
 dashboard['views'].append({'title':'设置与样本','path':'settings','cards':[
     maintenance,{'type':'entities','title':'通知与核对时间','entities':['sensor.porsche_wake_whatsapp_notification','input_text.porsche_wake_whatsapp_target','input_text.porsche_wake_whatsapp_account','input_text.porsche_wake_notify_service','input_datetime.porsche_wake_departure_time','input_datetime.porsche_wake_summary_time']},
     {'type':'entities','title':'确认有效充电夜（不确定时不要勾选）','entities':['input_datetime.porsche_wake_confirm_date','input_boolean.porsche_wake_confirm_plugged','input_boolean.porsche_wake_confirm_no_intervention','script.porsche_wake_confirm_night']},
