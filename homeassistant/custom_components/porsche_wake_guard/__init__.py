@@ -132,7 +132,7 @@ async def async_setup(hass, config):
     hass.services.async_register(DOMAIN,"evening_notification_test",guard.evening_notification_test,schema=vol.Schema({}))
     hass.services.async_register(DOMAIN,"confirm_night",guard.confirm_night,schema=vol.Schema({
         vol.Required("date"):str,vol.Required("plugged"):cv.boolean,vol.Required("no_intervention"):cv.boolean}))
-    hass.services.async_register(DOMAIN,'schedule_validation',guard.schedule_validation,schema=vol.Schema({vol.Required('at'):str}))
+    hass.services.async_register(DOMAIN,'schedule_validation',guard.schedule_validation,schema=vol.Schema({vol.Required('at'):str,vol.Optional('override_limits',default=False):cv.boolean,vol.Optional('approved_unknown_cooldown_until'):float}))
     hass.services.async_register(DOMAIN,'cancel_validation',guard.cancel_validation,schema=vol.Schema({}))
     if hass.is_running:
         await guard.runtime_start()

@@ -86,3 +86,15 @@ class ValidationTests(unittest.IsolatedAsyncioTestCase):
   self.assertEqual(self.g.ledger['validation']['status'],'unknown')
   self.assertEqual(self.g.ledger['validation_count'],1)
   self.assertFalse(self.g.ledger['pending']);self.assertFalse(self.requests)
+
+ def test_scoped_override_preserves_real_ledger(self):
+  from guard_under_test.validation import validation_policy_ledger
+  ledger={'blocked_until':2000,'last_attempt':999,'count':4,'validation_count':1}
+  policy=validation_policy_ledger(ledger,{'override_limits':True,'approved_unknown_cooldown_until':2000},[{'result':'request_failed_unknown'}])
+  self.assertEqual(policy['blocked_until'],0);self.assertEqual(policy['count'],0)
+  self.assertEqual(ledger['blocked_until'],2000);self.assertEqual(ledger['validation_count'],1)
+ def test_override_cannot_clear_auth_rate_or_changed_deadline(self):
+  from guard_under_test.validation import validation_policy_ledger
+  for ledger,rows in (({'blocked_until':2000,'auth_block':True},[{'result':'request_failed_unknown'}]),({'blocked_until':2000},[{'result':'rate_limited'}]),({'blocked_until':2001},[{'result':'request_failed_unknown'}]),({'blocked_until':2000},[])):
+   policy=validation_policy_ledger(ledger,{'override_limits':True,'approved_unknown_cooldown_until':2000},rows)
+   self.assertEqual(policy['blocked_until'],ledger['blocked_until'])

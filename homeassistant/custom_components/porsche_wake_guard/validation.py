@@ -12,6 +12,23 @@ LABELS={'scheduled':'等待一次性验收','running':'正在验收','unplugged'
         'connected':'未发现未插枪','incomplete':'本次验收未完成','missed':'错过验收',
         'unknown':'验收被重启中断，结果未知','cancelled':'已取消'}
 
+def validation_policy_ledger(ledger,job,rows):
+    """Apply explicit, per-job exceptions to a copy; never clear live protection."""
+    policy=dict(ledger)
+    if job.get('override_limits'):
+        policy.update(last_attempt=0,count=0,evening_count=0,validation_count=0)
+    approved=job.get('approved_unknown_cooldown_until')
+    if approved and approved==ledger.get('blocked_until') and not ledger.get('auth_block'):
+        failure=None
+        for row in reversed(rows):
+            code=row.get('reason') or row.get('result')
+            if code in ('request_failed_unknown','timeout_unknown','rate_limited','authentication_required','cached_read_failed','interrupted_request_unknown'):
+                failure=code;break
+            if row.get('result')=='validation_complete' and row.get('validation',{}).get('reason') in ('rate_limited','authentication_required'):
+                failure=row['validation']['reason'];break
+        if failure in ('request_failed_unknown','timeout_unknown'):policy['blocked_until']=0
+    return policy
+
 class Validation:
     async def schedule_validation(self,call):
         dt=datetime.fromisoformat(call.data['at'])
@@ -26,7 +43,11 @@ class Validation:
             if old.get('id')==key:return
             if key in self.ledger.get('validation_seen',[]):raise ValueError('Validation already attempted')
             self.ledger['validation']={'id':key,'due':due,'end':due+300,'status':'scheduled',
-                'date':dt.astimezone(ZONE).date().isoformat(),'used_refresh':False}
+                'date':dt.astimezone(ZONE).date().isoformat(),'used_refresh':False,
+                'override_limits':call.data.get('override_limits',False),
+                'approved_unknown_cooldown_until':call.data.get('approved_unknown_cooldown_until')}
+            await self.record('validation_scheduled',purpose='validation',validation_id=key,
+                override_limits=call.data.get('override_limits',False),approved_unknown_cooldown_until=call.data.get('approved_unknown_cooldown_until'))
             await self.save()
         self.publish_validation()
 
@@ -88,13 +109,15 @@ class Validation:
             reason=None
             if not sufficient:
                 now=time.time()
-                reason=refresh_block(self.ledger,before,now,self.failed,purpose='validation')
+                policy=validation_policy_ledger(self.ledger,job,self.rows)
+                reason=refresh_block(policy,before,now,self.failed,purpose='validation')
                 date=datetime.fromtimestamp(now,ZONE).date().isoformat()
-                if self.ledger.get('validation_date')==date and self.ledger.get('validation_count',0)>=1:reason='validation_limit'
+                if not job.get('override_limits') and self.ledger.get('validation_date')==date and self.ledger.get('validation_count',0)>=1:reason='validation_limit'
                 if now>=job['end']:reason='validation_window_expired'
                 if self.hass.config.time_zone!='Europe/Dublin':reason='timezone_mismatch'
                 if reason is None:
-                    self.ledger.update(validation_date=date,validation_count=1,last_attempt=now,pending=True,pending_purpose='validation')
+                    attempts=self.ledger.get('validation_count',0) if self.ledger.get('validation_date')==date else 0
+                    self.ledger.update(validation_date=date,validation_count=attempts+1,last_attempt=now,pending=True,pending_purpose='validation')
                     job.update(used_refresh=True,request_started=now)
                     await self.save()
                     try:await self.press_current()
