@@ -156,7 +156,7 @@ class Runtime(EveningNotifications):
             next_slots=[datetime.fromisoformat((local+timedelta(days=day)).date().isoformat()+'T'+t).replace(tzinfo=ZONE)
                         for day in (0,1) for t in times]
             next_slot=next((d for d in sorted(next_slots) if d.timestamp()>now and d.strftime('%Y-%m-%d|%H:%M') not in self.ledger['seen']),None)
-            pause='持久化或日志异常' if self.failed else '需要重新认证' if self.ledger.get('auth_block') else '冷却暂停中' if now<self.ledger.get('blocked_until',0) else '已关闭' if not enabled else '无'
+            pause='等待缓存补验' if self.ledger.get('confirmation') else '持久化或日志异常' if self.failed else '需要重新认证' if self.ledger.get('auth_block') else '冷却暂停中' if now<self.ledger.get('blocked_until',0) else '已关闭' if not enabled else '无'
             stamp=snapshot.get('vehicle_timestamp')
             self.hass.states.async_set('sensor.porsche_wake_health','运行正常' if pause=='无' else pause,{
                 'friendly_name':'Porsche 运行状态','next_slot':next_slot.isoformat() if next_slot and enabled else None,
@@ -241,6 +241,7 @@ class Runtime(EveningNotifications):
                     await self.meta_store.async_save(self.meta)
             self.publish_whatsapp()
             if allow_evening:
+                await self.confirmation_maintenance(now)
                 await self.validation_maintenance(now)
                 await self.evening_maintenance(now)
             else:

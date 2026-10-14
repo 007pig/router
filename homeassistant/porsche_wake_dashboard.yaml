@@ -318,6 +318,25 @@
               }
             ]
           }
+        },
+        {
+          "type": "entities",
+          "title": "实时查询异常后的缓存补验",
+          "entities": [
+            "sensor.porsche_wake_confirmation",
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_confirmation",
+              "attribute": "due_local",
+              "name": "补验计划时间"
+            },
+            {
+              "type": "attribute",
+              "entity": "sensor.porsche_wake_confirmation",
+              "attribute": "note",
+              "name": "证据说明"
+            }
+          ]
         }
       ]
     },

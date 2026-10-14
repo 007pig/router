@@ -24,6 +24,7 @@ def slot_key(now, times, manual=False):
 
 def decide(now, key, ledger, snapshot, target, interval, limit):
     one_off = ledger.get("one_off") == key
+    if ledger.get("confirmation"):return "confirmation_pending"
     if key in ledger["seen"]:
         return "duplicate"
     if ledger.get("pending"):

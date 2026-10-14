@@ -57,7 +57,7 @@ class ValidationTests(unittest.IsolatedAsyncioTestCase):
   for exc in (TimeoutError(),g.ObservedFailure(401),g.ObservedFailure(429,'172800')):
    self.g.ledger={'seen':[],'count':0,'date':'','validation':{'id':self.at,'date':'2026-10-14','due':self.now,'end':self.now+300,'status':'scheduled','used_refresh':False}}
    self.sample['measurement_timestamps']['CHARGING_SUMMARY']=self.now-1000;self.error=exc;self.requests=[]
-   r=await self.run_check();self.assertEqual(r['status'],'incomplete');self.assertEqual(self.requests,[1]);self.assertFalse(r['notify'])
+   r=await self.run_check();self.assertEqual(r['status'],'waiting_confirmation' if isinstance(exc,TimeoutError) else 'incomplete');self.assertEqual(self.requests,[1]);self.assertFalse(r.get('notify'))
  async def test_direct_connected_never_control(self):
   self.sample.update(charging_status='charging',power_kw=7,charging_mode='DIRECT',direct_switch='on')
   self.sample['measurement_timestamps']['CHARGING_RATE']=self.now

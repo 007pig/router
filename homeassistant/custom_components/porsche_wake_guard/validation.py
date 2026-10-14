@@ -8,7 +8,7 @@ from .mode_evidence import describe
 
 VALIDATION_REASONS={'validation_limit':'今日验收查询额度已使用','timezone_mismatch':'HA 时区不是 Europe/Dublin','validation_window_expired':'已超过验收执行窗口'}
 
-LABELS={'scheduled':'等待一次性验收','running':'正在验收','unplugged':'已确认未插枪',
+LABELS={'waiting_confirmation':'调用异常，等待缓存补验','scheduled':'等待一次性验收','running':'正在验收','unplugged':'已确认未插枪',
         'connected':'未发现未插枪','incomplete':'本次验收未完成','missed':'错过验收',
         'unknown':'验收被重启中断，结果未知','cancelled':'已取消'}
 
@@ -38,7 +38,7 @@ class Validation:
         if self.hass.config.time_zone!='Europe/Dublin':raise ValueError('Europe/Dublin required')
         async with self.lock:
             old=self.ledger.get('validation',{})
-            if old.get('status')=='running':raise ValueError('Validation is already running')
+            if old.get('status') in ('running','waiting_confirmation'):raise ValueError('Validation is already running')
             key=dt.astimezone(ZONE).isoformat()
             if old.get('id')==key:return
             if key in self.ledger.get('validation_seen',[]):raise ValueError('Validation already attempted')
@@ -77,6 +77,7 @@ class Validation:
 
     async def validation_maintenance(self,now):
         self.publish_validation()
+        if self.ledger.get('confirmation'):return
         task=getattr(self,'validation_task',None)
         if task and not task.done():return
         job=self.ledger.get('validation')
@@ -121,24 +122,29 @@ class Validation:
                     job.update(used_refresh=True,request_started=now)
                     await self.save()
                     try:await self.press_current()
-                    except Exception as exc:reason=self.apply_request_failure(exc,time.time())
+                    except Exception as exc:
+                        if await self.defer_request_failure(exc,'validation',before,now):return
+                        reason=self.apply_request_failure(exc,time.time())
                     else:job['request_result']='调用成功';self.ledger['pending']=False
                     self.ledger.pop('pending_purpose',None)
                     await self.save()
-            after=self.snapshot();now=time.time();check=evaluate(after,now)
-            previous=before.get('measurement_timestamps',{}).get('CHARGING_SUMMARY')
-            stamp=after.get('measurement_timestamps',{}).get('CHARGING_SUMMARY')
-            new_data=bool(job.get('request_started') and isinstance(stamp,(int,float)) and
-                          stamp>job['request_started'] and stamp<=now and
-                          (previous is None or stamp>previous))
-            status=('unplugged' if check['plugged'] is False else 'connected' if check['plugged'] is True or check['plugged_inferred'] else 'incomplete')
-            if reason:status='incomplete'
-            job.update(status=status,finished=datetime.fromtimestamp(now,ZONE).isoformat(),after=after,
-                reason=reason,reason_text=REASONS.get(reason,VALIDATION_REASONS.get(reason,reason)),vehicle_response='取得请求后的新车辆测量' if new_data else '未验证请求后的车辆响应' if job['used_refresh'] else '仅使用现有缓存',
-                notify=status=='unplugged',**describe(after,check))
-            if reason and job['used_refresh']:job['request_result']='失败或结果未知'
-            await self.save()
-            await self.record('validation_complete',purpose='validation',validation_id=job['id'],validation=dict(job))
+            await self.complete_validation(job,self.snapshot(),reason)
+
+    async def complete_validation(self,job,after,reason):
+        now=time.time();check=evaluate(after,now)
+        previous=job['before'].get('measurement_timestamps',{}).get('CHARGING_SUMMARY')
+        stamp=after.get('measurement_timestamps',{}).get('CHARGING_SUMMARY')
+        new_data=bool(job.get('request_started') and isinstance(stamp,(int,float)) and
+                      stamp>job['request_started'] and stamp<=now and
+                      (previous is None or stamp>previous))
+        status=('unplugged' if check['plugged'] is False else 'connected' if check['plugged'] is True or check['plugged_inferred'] else 'incomplete')
+        if reason:status='incomplete'
+        job.update(status=status,finished=datetime.fromtimestamp(now,ZONE).isoformat(),after=after,
+            reason=reason,reason_text=REASONS.get(reason,VALIDATION_REASONS.get(reason,reason)),vehicle_response='取得请求后的新车辆测量' if new_data else '未验证请求后的车辆响应' if job['used_refresh'] else '仅使用现有缓存',
+            notify=status=='unplugged',**describe(after,check))
+        if reason and job['used_refresh']:job['request_result']='失败或结果未知'
+        await self.save()
+        await self.record('validation_complete',purpose='validation',validation_id=job['id'],validation=dict(job))
         self.publish_validation()
         if job['notify']:self.hass.async_create_background_task(self.validation_notice(dict(job)),'porsche-validation-notice')
 

@@ -89,8 +89,9 @@ class GuardTest(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_error_blocks_no_retry(self):
         self.guard.error=RuntimeError("SECRET MUST NOT BE LOGGED")
         await self.guard.run(self.call)
-        self.assertEqual(self.guard.records[-1],"request_failed_unknown")
-        self.assertGreater(self.guard.ledger["blocked_until"],g.time.time())
+        self.assertEqual(self.guard.records[-1],"request_confirmation_pending")
+        self.assertEqual(self.guard.ledger["blocked_until"],0)
+        self.assertEqual(self.guard.ledger["confirmation"]["state"],"waiting")
         self.assertEqual(len(self.guard.calls),1)
 
     async def test_rate_limit_retry_after(self):

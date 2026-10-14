@@ -54,6 +54,7 @@ def evaluate(sample,now):
 
 def refresh_block(ledger,sample,now,failed=False,purpose='evening'):
     if failed:return 'storage_unavailable'
+    if ledger.get('confirmation'):return 'confirmation_pending'
     if ledger.get('pending') or ledger.get('observation'):return 'request_busy'
     if ledger.get('auth_block'):return 'authentication_required'
     if now<ledger.get('blocked_until',0):return 'failure_cooldown'
@@ -101,6 +102,9 @@ REASONS={
 
 class Evening:
     def publish_evening(self):
+        if self.ledger.get('confirmation',{}).get('purpose')=='evening':
+            self.hass.states.async_set('sensor.porsche_wake_evening_check','调用异常，等待缓存补验',{'friendly_name':'Porsche 晚间充电准备','confirmation_due':self.ledger['confirmation']['due']})
+            return
         from .direct_control import CONTROL_LABELS
         job=self.ledger.get('evening_job',{})
         control=job.get('direct_control',{})
@@ -133,6 +137,7 @@ class Evening:
 
     async def evening_maintenance(self,now):
         self.publish_evening()
+        if self.ledger.get('confirmation'):return
         task=getattr(self,'evening_task',None)
         if task is not None and not task.done():return
         if self.hass.config.time_zone!='Europe/Dublin':return
@@ -184,7 +189,9 @@ class Evening:
                     await self.save()
                     await self.record('evening_refresh_started',purpose='evening_check',evening_date=date,before=sample)
                     try:await self.press_current()
-                    except Exception as exc:reason=self.apply_request_failure(exc,time.time())
+                    except Exception as exc:
+                        if await self.defer_request_failure(exc,'evening',sample,now):return
+                        reason=self.apply_request_failure(exc,time.time())
                     else:
                         self.ledger['pending']=False
                         await self.record('evening_refresh_success',purpose='evening_check',evening_date=date)
@@ -227,7 +234,7 @@ class Evening:
                else details['plugged_label']+' · '+details['charging_label'] if check['plugged_inferred'] else '状态无法确认，未执行关闭')
         result={'date':job['date'],'checked_at':local.isoformat(),'window_end':job['window_end'],
                 'label':label,'control_state':control['state'],'control_label':CONTROL_LABELS[control['state']],
-                'control':control,'snapshot':sample,**details,
+                'control':control,'snapshot':sample,**details,'query_result':job.get('query_result'),
                 'plugged_inferred':check['plugged_inferred'],
                 'plugged':check['plugged'],'direct':check['direct'],'used_refresh':job['used_refresh'],
                 'reason':reason,'measurement_timestamps':times,'notify':notify,'message':'\n'.join(message)}

@@ -3,7 +3,7 @@ from datetime import datetime
 from .policy import ZONE
 
 FAILURES = {'authentication_required','rate_limited','timeout_unknown',
-            'request_failed_unknown','interrupted_request_unknown'}
+            'request_failed_unknown','interrupted_request_unknown','request_confirmation_failed'}
 SKIPS = {'unplugged','target_reached','already_charging','minimum_interval',
          'daily_limit','failure_cooldown','button_unavailable','previous_request_unknown'}
 
@@ -35,9 +35,11 @@ def classify(rows):
     after=observations[-1][1] if observations else {}
     newer=[(r,s) for r,s in observations if at is not None and fresh(s,epoch(r['utc']))
            and s['vehicle_timestamp']>at and s['vehicle_timestamp']>(before.get('vehicle_timestamp') or 0)]
-    request='调用成功' if success else '请求失败或结果未知' if failure else '请求未完成' if start else '已跳过'
+    delayed=any(r['result']=='request_delayed_confirmed' for r in rows)
+    pending=any(r['result']=='request_confirmation_pending' for r in rows) and not delayed and not failure
+    request='延迟确认成功' if delayed else '调用异常，等待缓存补验' if pending else '调用成功' if success else '请求失败或结果未知' if failure else '请求未完成' if start else '已跳过'
     if not rows:request='没有执行记录'
-    response='取得车辆新数据' if newer else '未确认车辆响应' if start else '不适用'
+    response='取得车辆新数据' if newer or delayed else '未确认车辆响应' if start else '不适用'
     completed=any(not s.get('contradictory') and fresh(s,epoch(r['utc'])) and isinstance(s.get('soc'),(int,float)) and s['soc']>=100
                   and s.get('charging_status')=='charging_completed' for r,s in observations)
     before_active=at is not None and fresh(before,at) and charging(before)

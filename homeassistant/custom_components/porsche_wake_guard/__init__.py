@@ -20,6 +20,7 @@ from homeassistant.components import persistent_notification
 from homeassistant.exceptions import HomeAssistantError
 
 from .policy import ZONE, decide, slot_key
+from .confirmation import Confirmation
 from .validation import Validation
 from .mode_evidence import mode_evidence
 from .audit import Audit
@@ -49,6 +50,10 @@ RESULT_LABELS = {
     "one_off_scheduled": "已安排一次性唤醒请求",
     "authentication_hold_cleared": "认证暂停已解除，等待下一次计划",
     "authentication_required": "登录认证失效，请重新登录 Porsche",
+    "request_confirmation_pending":"调用异常，等待缓存补验",
+    "request_delayed_confirmed":"延迟确认成功",
+    "request_confirmation_failed":"补验后仍无法确认",
+    "confirmation_pending":"其他请求正在等待缓存补验",
     "rate_limited": "Porsche 服务限流，后续请求已暂停",
     "timeout_unknown": "请求超时，是否送达车辆尚不确定",
     "request_failed_unknown": "请求失败，车辆响应尚不确定",
@@ -134,6 +139,8 @@ async def async_setup(hass, config):
         vol.Required("date"):str,vol.Required("plugged"):cv.boolean,vol.Required("no_intervention"):cv.boolean}))
     hass.services.async_register(DOMAIN,'schedule_validation',guard.schedule_validation,schema=vol.Schema({vol.Required('at'):str,vol.Optional('override_limits',default=False):cv.boolean,vol.Optional('approved_unknown_cooldown_until'):float}))
     hass.services.async_register(DOMAIN,'cancel_validation',guard.cancel_validation,schema=vol.Schema({}))
+    hass.services.async_register(DOMAIN,'test_confirmation_cache',guard.test_confirmation_cache,schema=vol.Schema({vol.Optional('ignore_cooldown',default=False):cv.boolean}))
+    hass.services.async_register(DOMAIN,'test_realtime_then_cache',guard.test_realtime_then_cache,schema=vol.Schema({vol.Required('override_limits'):cv.boolean}))
     if hass.is_running:
         await guard.runtime_start()
     else:
@@ -141,7 +148,7 @@ async def async_setup(hass, config):
     return True
 
 
-class Guard(Runtime,Evening,DirectControl,Validation):
+class Guard(Runtime,Evening,DirectControl,Validation,Confirmation):
     def __init__(self, hass):
         self.hass = hass
         self.store = Store(hass, 1, DOMAIN, private=True, atomic_writes=True)
@@ -400,11 +407,11 @@ class Guard(Runtime,Evening,DirectControl,Validation):
         status=getattr(exc,'status_code',None) or getattr(exc,'code',None) or getattr(response,'status_code',None)
         reason='timeout_unknown' if isinstance(exc,TimeoutError) else 'request_failed_unknown'
         until=datetime.fromtimestamp(now,ZONE).replace(hour=0,minute=0,second=0,microsecond=0)+timedelta(days=1)
-        self.ledger['blocked_until']=until.timestamp()
+        self.ledger['blocked_until']=max(until.timestamp(),self.ledger.get('blocked_until',0))
         if status in (401,403):
             self.ledger['auth_block']=True;reason='authentication_required'
         elif status==429:
-            reason='rate_limited';self.ledger['blocked_until']=retry_deadline(exc,now)
+            reason='rate_limited';self.ledger['blocked_until']=max(retry_deadline(exc,now),self.ledger.get('blocked_until',0))
         self.ledger['pending']=False
         return reason
 
@@ -460,6 +467,7 @@ class Guard(Runtime,Evening,DirectControl,Validation):
             try:
                 await self.press_current()
             except Exception as exc:
+                if await self.defer_request_failure(exc,'night',before,now,key):return
                 reason=self.apply_request_failure(exc,time.time())
                 await self.save()
                 await self.record(reason, slot=key, before=before)

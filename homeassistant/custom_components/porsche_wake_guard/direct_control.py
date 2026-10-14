@@ -58,6 +58,7 @@ class DirectControl:
     def control_block(self,sample,now,end,reserved=False):
         if self.value('input_boolean.porsche_wake_evening_enabled')!='on':return 'disabled'
         if self.failed:return 'storage'
+        if self.ledger.get('confirmation'):return 'busy'
         if now>=end:return 'window'
         if self.ledger.get('pending') and not (reserved and self.ledger.get('pending_purpose')=='direct_off'):return 'busy'
         if self.ledger.get('observation'):return 'busy'

@@ -92,6 +92,9 @@ cards.append({'type':'markdown','content':"{{ state_attr('sensor.porsche_wake_ev
 cards.append({'type':'entities','title':'一次性只读验收','entities':['sensor.porsche_wake_validation',
     *[{'type':'attribute','entity':'sensor.porsche_wake_validation','attribute':key,'name':name} for key,name in [('id','计划时间'),('before_status','查询前状态'),('after_status','查询后状态'),('before_measured_at','查询前测量时间'),('after_measured_at','查询后测量时间'),('finished','完成时间'),('used_refresh','使用实时查询'),('data_age_minutes','判定时数据年龄（分钟）'),('reason_text','保护原因'),('vehicle_response','车辆响应证据'),('plugged_label','连接判断'),('charging_label','具体充电状态'),('direct_label','模式判断'),('charging_mode_raw','原始模式'),('iphone_result','iPhone 结果'),('whatsapp_result','WhatsApp 结果')]]],
     'footer':{'type':'buttons','entities':[{'entity':'sensor.porsche_wake_validation','name':'取消待执行验收','tap_action':{'action':'call-service','service':'porsche_wake_guard.cancel_validation'}}]}})
+cards.append({'type':'entities','title':'实时查询异常后的缓存补验','entities':['sensor.porsche_wake_confirmation',
+    {'type':'attribute','entity':'sensor.porsche_wake_confirmation','attribute':'due_local','name':'补验计划时间'},
+    {'type':'attribute','entity':'sensor.porsche_wake_confirmation','attribute':'note','name':'证据说明'}]})
 dashboard['views'].append({'title':'设置与样本','path':'settings','cards':[
     maintenance,{'type':'entities','title':'通知与核对时间','entities':['sensor.porsche_wake_whatsapp_notification','input_text.porsche_wake_whatsapp_target','input_text.porsche_wake_whatsapp_account','input_text.porsche_wake_notify_service','input_datetime.porsche_wake_departure_time','input_datetime.porsche_wake_summary_time']},
     {'type':'entities','title':'确认有效充电夜（不确定时不要勾选）','entities':['input_datetime.porsche_wake_confirm_date','input_boolean.porsche_wake_confirm_plugged','input_boolean.porsche_wake_confirm_no_intervention','script.porsche_wake_confirm_night']},
