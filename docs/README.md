@@ -13,7 +13,7 @@ operations, and cable modem behavior.
 
 ## Operations
 
-- [Home Assistant / Porsche Cayenne 定时唤醒试验](operations/home-assistant-porsche-wake.md)
+- [Home Assistant / Porsche 充电管理（已迁至 PVE 项目）](https://github.com/007pig/pve/blob/main/docs/home-assistant-porsche-wake.md)
 
 - [OPNsense Gateway ntfy Alert](operations/opnsense-gateway-ntfy-alert.md)
 - [OPNsense WAN Link Speed Watchdog](operations/opnsense-wan-link-speed-watchdog.md)
