@@ -1,7 +1,7 @@
 # OPNsense Current Non-Default Configuration
 
 Date: 2026-07-01
-Last updated: 2026-08-03
+Last updated: 2026-10-24
 
 This document records the current non-default OPNsense configuration observed
 from the router. It is an operational inventory, with dated notes for changes
@@ -479,6 +479,12 @@ Unbound:
   enabled: yes
   port: 5353
   DNSSEC: enabled
+  failure logging (enabled 2026-10-24):
+    log-servfail: yes
+    val-log-level: 2
+    verbosity: 1
+    log-queries: no
+    log-replies: no
   query forwarding:
     localdomain -> 127.0.0.1:53053
     1.168.192.in-addr.arpa -> 127.0.0.1:53053
@@ -516,6 +522,15 @@ AdGuardHome remains the client-facing port-53 listener. Unbound remains on port
 5353. Dnsmasq is not the primary DNS listener for LAN clients; it is the DHCP
 server, a local DNS connector for DHCP-registered names, and the managed-alias
 resolver for the WARP exclusion domains forwarded by Unbound.
+
+On 2026-10-24, at the user's request, SERVFAIL and detailed DNSSEC validation
+failure logging were enabled persistently through the native Unbound model.
+The generated configuration passed validation and was applied with
+`unbound-control reload_keep_cache`. A query to `dnssec-failed.org` verified
+that validation failure reasons and the upstream address appeared in
+`/var/log/resolver/latest.log`. Normal DNS and HTTPS checks remained successful.
+Backup, verification evidence, log-reading commands, and targeted reversal are
+recorded in [riverlight DNS investigation](../network/riverlight-dns-investigation-2026-10-24.md#failure-logging-enabled-after-investigation).
 
 ## DHCPv4 LAN
 
