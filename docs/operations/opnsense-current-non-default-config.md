@@ -495,6 +495,10 @@ Unbound:
     images.openai.com -> 127.0.0.1:53053
     taobao.com -> 127.0.0.1:53053
     tournamentsoftware.com -> 127.0.0.1:53053
+    telegram.org -> 127.0.0.1:53053
+    t.me -> 127.0.0.1:53053
+    telegram.me -> 127.0.0.1:53053
+    telegra.ph -> 127.0.0.1:53053
   local zone type: transparent
 
 Dnsmasq:
@@ -691,6 +695,10 @@ ChatGPT_WARP_DISABLED (external):
     images.openai.com
     taobao.com (root domain and all subdomains)
     tournamentsoftware.com (root domain and all subdomains)
+    telegram.org (root domain and all subdomains, including api.telegram.org)
+    t.me (root domain and all subdomains)
+    telegram.me (root domain and all subdomains)
+    telegra.ph (root domain and all subdomains)
 
 Perplexity (host):
   23.22.208.105
@@ -1222,3 +1230,43 @@ Configuration items worth revisiting before future cleanup:
 - [OPNsense Gateway ntfy Alert](opnsense-gateway-ntfy-alert.md)
 - [OPNsense WAN Link Speed Watchdog](opnsense-wan-link-speed-watchdog.md)
 - [OPNsense + Shelly Modem Watchdog](opnsense-shelly-modem-watchdog.md)
+
+## Telegram Direct WAN Routing (2026-11-13)
+
+At the user's request, added `telegram.org`, `t.me`, `telegram.me`, and
+`telegra.ph` to the existing Dnsmasq-managed `ChatGPT_WARP_DISABLED` external
+alias. Each domain override covers the root and all subdomains, including
+`api.telegram.org`, `core.telegram.org`, and `web.telegram.org`. Matching
+Unbound forwarding zones use `127.0.0.1:53053`. The existing IPv4/IPv6 direct
+LAN pass rules precede WARP policy routing; IPv6 uses the existing WAN NAT66.
+
+Backup on the router:
+`/conf/config.xml.pre-telegram-direct-20261113-102910`.
+Dnsmasq and Unbound were restarted; XML, Dnsmasq syntax, and Unbound checks
+passed. Refreshed nested aliases and verified these observed DNS destinations
+in both `ChatGPT_WARP_DISABLED` and `warp_disabled`:
+
+- `149.154.167.99` (Telegram website and related tested names)
+- `149.154.166.110` (API)
+- `149.154.164.13` (Telegraph)
+- `2001:67c:4e8:f004::9` (Telegram IPv6)
+
+Removed eight PF state entries matching only those destinations by precise
+state ID, including an existing IPv6 WARP connection. Address-based state
+kill attempts had returned zero and did not remove that connection.
+Subsequent API HTTPS tests from the Mac succeeded over both IPv4 and IPv6
+with HTTP 302 to `https://core.telegram.org/bots`. PF states confirmed WAN NAT
+`192.168.0.150` and WAN NAT66 `2a02:8084:2001:6600:2f0:cbff:feef:e549`,
+with no WARP-translated API state remaining at the final check.
+
+This uses observed DNS answers, not TLS hostname inspection. Clients using
+independent encrypted DNS, cached addresses that have not entered the table,
+or Telegram native app connections to other hard-coded IPs are not guaranteed
+to match this domain-based policy. Shared destination IPs also share routing.
+No Telegram-wide IP ranges were added.
+
+For targeted rollback, remove the four matching Dnsmasq domain overrides and
+Unbound forwarding entries, restart those services, and expire/remove only
+Telegram destination entries from the managed alias before refreshing nested
+aliases. The full backup above is available but restoring it can overwrite
+unrelated subsequent changes.
