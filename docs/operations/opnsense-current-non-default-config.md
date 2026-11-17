@@ -1,7 +1,7 @@
 # OPNsense Current Non-Default Configuration
 
 Date: 2026-07-01
-Last updated: 2026-10-24
+Last updated: 2026-11-17
 
 This document records the current non-default OPNsense configuration observed
 from the router. It is an operational inventory, with dated notes for changes
@@ -499,6 +499,7 @@ Unbound:
     t.me -> 127.0.0.1:53053
     telegram.me -> 127.0.0.1:53053
     telegra.ph -> 127.0.0.1:53053
+    YouTube domains listed in YouTube Direct WAN Routing -> 127.0.0.1:53053
   local zone type: transparent
 
 Dnsmasq:
@@ -699,6 +700,7 @@ ChatGPT_WARP_DISABLED (external):
     t.me (root domain and all subdomains)
     telegram.me (root domain and all subdomains)
     telegra.ph (root domain and all subdomains)
+    YouTube domains listed in YouTube Direct WAN Routing
 
 Perplexity (host):
   23.22.208.105
@@ -935,8 +937,8 @@ Firewall/NAT support:
 AdGuardHome is enabled and is the observed listener on port 53. Unbound is
 enabled on port 5353 and has DNSSEC enabled. Dnsmasq listens on port 53053 as a
 local connector for DHCP-registered names and reverse zones; clients still use
-OPNsense on port 53. For managed ChatGPT, Taobao, and Tournament Software WARP
-exclusions, AdGuardHome forwards to Unbound, Unbound forwards the managed
+OPNsense on port 53. For the WARP exclusions managed by DNS, AdGuardHome
+forwards to Unbound, Unbound forwards the managed
 domains to Dnsmasq, and Dnsmasq populates the legacy-named
 `ChatGPT_WARP_DISABLED` external alias while using explicit Cloudflare
 upstreams from the managed include file.
@@ -1270,3 +1272,44 @@ Unbound forwarding entries, restart those services, and expire/remove only
 Telegram destination entries from the managed alias before refreshing nested
 aliases. The full backup above is available but restoring it can overwrite
 unrelated subsequent changes.
+
+## YouTube Direct WAN Routing (2026-11-17)
+
+The existing Dnsmasq-managed external alias `ChatGPT_WARP_DISABLED` now
+learns A and AAAA answers for the following domains and their subdomains.
+Matching Unbound forwarding zones use `127.0.0.1:53053`.
+
+- `youtube.com` covers the main site, Music, Studio, and TV subdomains.
+- `youtu.be`, `youtube-nocookie.com`, `youtubekids.com`, and
+  `youtubeeducation.com` cover short links, embedded playback, Kids, and
+  the Player for Education.
+- `googlevideo.com` covers video delivery. `ytimg.com`, `yt3.ggpht.com`,
+  and `yt3.googleusercontent.com` cover thumbnails, assets, and avatars.
+- `youtubei.googleapis.com`, `youtube.googleapis.com`, and
+  `youtubei-att.googleapis.com` cover YouTube-specific API endpoints.
+
+The existing LAN pass rules send matching traffic from `warp_hosts` via WAN
+IPv4 NAT and WAN IPv6 NAT66. The alias retains its 86400-second expiration.
+Addresses shared by multiple services use the same PF routing decision.
+The YouTube hostnames used by AdGuardHome's Restricted Mode also match the
+`youtube.com` suffix. Clients using a separate DNS resolver can still use
+WARP for destinations the router has yet to learn.
+
+Validation on OPNsense 26.7.9_1 included Dnsmasq and Unbound configuration
+checks and service restarts. A one-time seed added 19 addresses from
+observed LAN DNS and Unbound answers during the transition. A subsequent
+test resolved six new `googlevideo.com` addresses through port 53 on
+OPNsense and found all six in `ChatGPT_WARP_DISABLED` and `warp_disabled`.
+
+From a Mac in `warp_hosts`, the home page returned HTTP 200 over HTTP/3
+and a public video returned a 64 KiB HTTP 206 response over HTTPS on
+both IPv4 and IPv6. The requests used answers from the router's LAN DNS.
+PF states confirmed WAN NAT and NAT66 for all four connections. Thumbnail
+and API HTTPS connections also used WAN NAT and NAT66. The Cloudflare
+trace control reported `warp=on` for both families.
+
+For targeted rollback, remove these 12 Dnsmasq domain overrides and their
+matching Unbound query forwarding entries. Restart both DNS services and
+refresh aliases. Existing dynamic addresses age out within the configured
+expiry window. The full pre-change configuration is available on the router
+at `/conf/config.xml.pre-youtube-direct-20261117-201601`.
