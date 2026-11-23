@@ -1,0 +1,332 @@
+#!/usr/local/bin/php
+<?php
+
+namespace ModemWatchdog;
+
+const TAG = 'modem-watchdog';
+const WAN_GATEWAY = 'WAN_DHCP';
+const WAN_INTERFACE = 'igc0';
+const PROBE_IP = '8.8.8.8';
+const SHELLY_RPC = 'http://192.168.1.220/rpc/';
+const SHELLY_SWITCH = 0;
+const OFF_SECONDS = 20;
+const COOLDOWN_SECONDS = 900;
+const MAX_ATTEMPTS = 2;
+const DOWN_SAMPLES = 3;
+const ONLINE_SAMPLES = 2;
+const LEGACY_STATE_FILE = '/var/db/modem-watchdog.last-reboot';
+const LIVE_STATE_FILE = '/var/db/modem-watchdog.json';
+const DRY_STATE_FILE = '/var/run/modem-watchdog.dry-run.json';
+const LOCK_FILE = '/var/run/modem-watchdog.lock';
+
+function command(array $arguments): array
+{
+    $command = 'LC_ALL=C ' . implode(' ', array_map('escapeshellarg', $arguments));
+    exec($command . ' 2>/dev/null', $lines, $status);
+    return [$status, implode("\n", $lines)];
+}
+
+function gatewayStatus(mixed $gateway): string
+{
+    if (!is_array($gateway) || ($gateway['name'] ?? null) !== WAN_GATEWAY ||
+        !is_string($gateway['status'] ?? null) || !is_string($gateway['loss'] ?? null) ||
+        !preg_match('/^\d+(?:\.\d+)?\s*%$/D', $gateway['loss'])) {
+        return 'unknown';
+    }
+    return match ($gateway['status']) {
+        'none' => 'online',
+        'down', 'offline' => 'down',
+        default => 'other',
+    };
+}
+
+function probeWan(mixed $expectedGateway): string
+{
+    [$routeStatus, $route] = command(['/sbin/route', '-n', 'get', PROBE_IP]);
+    [$interfaceStatus, $interface] = command(['/sbin/ifconfig', WAN_INTERFACE, 'inet']);
+    if ($routeStatus !== 0 || $interfaceStatus !== 0 ||
+        !preg_match('/^\s*interface:\s+(\S+)/m', $route, $interfaceMatch) ||
+        $interfaceMatch[1] !== WAN_INTERFACE ||
+        !preg_match('/^\s*gateway:\s+(\S+)/m', $route, $gatewayMatch) ||
+        $gatewayMatch[1] !== $expectedGateway ||
+        !filter_var($expectedGateway, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) ||
+        preg_match_all('/^\s*inet\s+(\S+)/m', $interface, $addresses) !== 1 ||
+        !filter_var($addresses[1][0], FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+        return 'unknown';
+    }
+
+    [$status, $output] = command([
+        '/sbin/ping', '-n', '-S', $addresses[1][0], '-c', '3',
+        '-i', '0.4', '-W', '1000', '-t', '3', PROBE_IP,
+    ]);
+    return probeResult($status, $output);
+}
+
+function probeResult(int $status, string $output): string
+{
+    if ($status === 0) {
+        return 'reachable';
+    }
+    return $status === 2 && preg_match('/^3 packets transmitted, 0 packets received,/m', $output)
+        ? 'unreachable' : 'unknown';
+}
+
+function observeWan(bool $check = false): array
+{
+    [$status, $json] = command(['/bin/timeout', '5', '/usr/local/sbin/configctl', 'interface', 'gateways', 'status']);
+    $gateways = $status === 0 ? json_decode($json, true) : null;
+    $gateway = $gateways[WAN_GATEWAY] ?? null;
+    $gatewayState = gatewayStatus($gateway);
+    $probe = ($gatewayState === 'down' || $check) ? probeWan($gateway['address'] ?? null) : 'skipped';
+    $sample = match (true) {
+        $gatewayState === 'down' && $probe === 'unreachable' => 'down',
+        $gatewayState === 'down' && $probe === 'reachable' => 'other',
+        $gatewayState === 'down' => 'unknown',
+        default => $gatewayState,
+    };
+    return [$sample, "gateway={$gatewayState} wan_probe={$probe}"];
+}
+
+function shellyRpc(string $method, array $parameters): ?array
+{
+    [$status, $json] = command([
+        '/usr/local/bin/curl', '--noproxy', '*', '-fsS', '--connect-timeout', '3',
+        '--max-time', '5', SHELLY_RPC . $method . '?' . http_build_query($parameters),
+    ]);
+    $response = $status === 0 ? json_decode($json, true) : null;
+    return is_array($response) ? $response : null;
+}
+
+function readSwitch(): ?array
+{
+    return shellyRpc('Switch.GetStatus', ['id' => SHELLY_SWITCH]);
+}
+
+function switchState(?array $switch): string
+{
+    if (($switch['id'] ?? null) !== SHELLY_SWITCH || !is_bool($switch['output'] ?? null)) {
+        return 'unavailable';
+    }
+    if (!$switch['output']) {
+        return 'off';
+    }
+    foreach (['timer_started_at', 'timer_duration', 'timer_type'] as $field) {
+        if (array_key_exists($field, $switch)) {
+            return 'timer-active';
+        }
+    }
+    return 'ready';
+}
+
+function powerCycle(): bool
+{
+    $result = shellyRpc('Switch.Set', ['id' => SHELLY_SWITCH, 'on' => 'false', 'toggle_after' => OFF_SECONDS]);
+    return ($result['was_on'] ?? null) === true;
+}
+
+function loadState(string $path): array
+{
+    if (!file_exists($path)) {
+        $lastAttempt = 0;
+        if ($path === LIVE_STATE_FILE && file_exists(LEGACY_STATE_FILE)) {
+            $legacy = trim((string) @file_get_contents(LEGACY_STATE_FILE));
+            if (!ctype_digit($legacy) || (int) $legacy <= 0) {
+                throw new \RuntimeException('invalid legacy watchdog cooldown record');
+            }
+            $lastAttempt = (int) $legacy;
+        }
+        return [
+            'boot' => 0, 'observed_at' => 0, 'sample' => 'unknown', 'consecutive' => 0,
+            'attempts' => 0, 'last_attempt_at' => $lastAttempt,
+        ];
+    }
+
+    $state = json_decode((string) @file_get_contents($path), true);
+    foreach (['boot', 'observed_at', 'consecutive', 'attempts', 'last_attempt_at'] as $key) {
+        if (!is_int($state[$key] ?? null) || $state[$key] < 0) {
+            throw new \RuntimeException('invalid watchdog state');
+        }
+    }
+    if (!in_array($state['sample'] ?? null, ['online', 'down', 'other', 'unknown'], true) ||
+        $state['consecutive'] > DOWN_SAMPLES || $state['attempts'] > MAX_ATTEMPTS ||
+        ($state['attempts'] > 0 && $state['last_attempt_at'] === 0)) {
+        throw new \RuntimeException('invalid watchdog outage record');
+    }
+    return $state;
+}
+
+function saveState(string $path, array $state): void
+{
+    $directory = realpath(dirname($path));
+    if ($directory === false) {
+        throw new \RuntimeException('watchdog state directory is unavailable');
+    }
+    $temp = @tempnam($directory, '.modem-watchdog.');
+    if ($temp === false) {
+        throw new \RuntimeException('cannot stage watchdog state');
+    }
+
+    $file = null;
+    try {
+        if (dirname($temp) !== $directory || !chmod($temp, 0600)) {
+            throw new \RuntimeException('cannot prepare watchdog state in the target directory');
+        }
+        $data = json_encode($state, JSON_THROW_ON_ERROR) . "\n";
+        $file = @fopen($temp, 'wb');
+        if ($file === false || fwrite($file, $data) !== strlen($data) || !fflush($file) || !fsync($file)) {
+            throw new \RuntimeException('cannot persist watchdog state');
+        }
+        fclose($file);
+        $file = null;
+        if (!@rename($temp, $path)) {
+            throw new \RuntimeException('cannot publish watchdog state');
+        }
+    } finally {
+        if (is_resource($file)) {
+            fclose($file);
+        }
+        if (file_exists($temp)) {
+            @unlink($temp);
+        }
+    }
+}
+
+function recordSample(array $state, string $sample, int $boot, int $now): array
+{
+    $gap = $now - $state['observed_at'];
+    // Allow cron jitter while requiring observations from distinct, adjacent runs.
+    $adjacent = $state['boot'] === $boot && $gap >= 30 && $gap <= 90 && $state['sample'] === $sample;
+    $state['consecutive'] = match (true) {
+        !in_array($sample, ['online', 'down'], true) => 0,
+        $adjacent => min(DOWN_SAMPLES, $state['consecutive'] + 1),
+        default => 1,
+    };
+    $state['sample'] = $sample;
+    $state['boot'] = $boot;
+    $state['observed_at'] = $now;
+    if ($sample === 'online' && $state['consecutive'] >= ONLINE_SAMPLES) {
+        $state['attempts'] = 0;
+    }
+    return $state;
+}
+
+function runPoll(
+    string $path,
+    int $boot,
+    string $sample,
+    bool $dryRun,
+    callable $readSwitch,
+    callable $powerCycle,
+    callable $clock,
+    callable $log
+): void {
+    $previous = loadState($path);
+    $now = $clock();
+    $state = recordSample($previous, $sample, $boot, $now);
+    $action = 'observe';
+    if ($sample === 'down' && $state['consecutive'] >= DOWN_SAMPLES) {
+        $action = match (true) {
+            $state['attempts'] >= MAX_ATTEMPTS => 'wait-for-recovery',
+            $state['last_attempt_at'] > 0 && $now - $state['last_attempt_at'] < COOLDOWN_SECONDS => 'cooldown',
+            default => 'eligible',
+        };
+    }
+
+    if ($action !== 'eligible') {
+        saveState($path, $state);
+        $log("sample={$sample} consecutive={$state['consecutive']} attempts={$state['attempts']} action={$action}");
+        return;
+    }
+
+    $switch = switchState($readSwitch());
+    if ($switch !== 'ready') {
+        saveState($path, $state);
+        $log("action=defer shelly={$switch} attempts={$state['attempts']}");
+        return;
+    }
+
+    // Reserve the attempt before sending. A timeout or stopped process can leave the outcome unknown.
+    $state['attempts']++;
+    $state['last_attempt_at'] = max($now, $clock());
+    saveState($path, $state);
+    $details = "attempt={$state['attempts']}/" . MAX_ATTEMPTS . ' off_seconds=' . OFF_SECONDS;
+    if ($dryRun) {
+        $log("action=would-power-cycle {$details}");
+        return;
+    }
+    $log("action=power-cycle-start {$details}");
+    $outcome = $powerCycle() ? 'accepted' : 'unconfirmed';
+    $log("action=power-cycle-result {$details} shelly_outcome={$outcome}");
+}
+
+function acquireLock(string $path)
+{
+    $lock = @fopen($path, 'c');
+    if ($lock === false) {
+        throw new \RuntimeException('cannot open watchdog lock');
+    }
+    if (!flock($lock, LOCK_EX | LOCK_NB)) {
+        fclose($lock);
+        return null;
+    }
+    return $lock;
+}
+
+function main(array $argv): int
+{
+    $mode = $argv[1] ?? '';
+    if (count($argv) !== 2 || !in_array($mode, ['--check', '--dry-run', '--live'], true)) {
+        fwrite(STDERR, "usage: modem-watchdog --check|--dry-run|--live\n");
+        return 2;
+    }
+    if ($mode === '--check') {
+        [, $status] = observeWan(true);
+        $switch = switchState(readSwitch());
+        echo "{$status} shelly={$switch}\n";
+        return $status === 'gateway=online wan_probe=reachable' && $switch === 'ready' ? 0 : 1;
+    }
+
+    umask(0077);
+    $dryRun = $mode === '--dry-run';
+    $log = static function (string $message) use ($dryRun): void {
+        $label = $dryRun ? 'dry-run' : 'live';
+        command(['/usr/bin/logger', '-t', TAG, "mode={$label} {$message}"]);
+    };
+    try {
+        $lock = acquireLock(LOCK_FILE);
+        if ($lock === null) {
+            $log('action=skip reason=lock-held');
+            return 0;
+        }
+        try {
+            [$status, $boot] = command(['/sbin/sysctl', '-n', 'kern.boottime']);
+            if ($status !== 0 || !preg_match('/\bsec\s*=\s*(\d+)/', $boot, $match)) {
+                throw new \RuntimeException('cannot read router boot time');
+            }
+            [$sample, $details] = observeWan();
+            if ($dryRun) {
+                $details .= ' shelly=' . switchState(readSwitch());
+            }
+            runPoll(
+                $dryRun ? DRY_STATE_FILE : LIVE_STATE_FILE,
+                (int) $match[1],
+                $sample,
+                $dryRun,
+                __NAMESPACE__ . '\readSwitch',
+                __NAMESPACE__ . '\powerCycle',
+                'time',
+                static fn (string $message) => $log("{$details} {$message}")
+            );
+        } finally {
+            fclose($lock);
+        }
+    } catch (\Throwable $error) {
+        $log('action=error reason=' . $error->getMessage());
+        return 1;
+    }
+    return 0;
+}
+
+if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
+    exit(main($argv));
+}

@@ -1177,32 +1177,15 @@ loss state behavior: logged only, no ntfy notification
 This syshook is notification-only and independent of the modem watchdog. See:
 [OPNsense Gateway ntfy Alert](opnsense-gateway-ntfy-alert.md).
 
-## Modem Watchdog Syshook
+## Modem Watchdog
 
-The modem watchdog is installed and executable:
-
-```text
-/usr/local/etc/rc.syshook.d/monitor/90-modem-watchdog
-permissions: -rwxr-xr-x root wheel
-```
-
-Current constants:
-
-```php
-const TARGET_GATEWAY = 'WAN_DHCP';
-const SHELLY_IP = '192.168.1.220';
-const SHELLY_SWITCH_ID = 0;
-const DEBOUNCE_SECONDS = 90;
-const SHELLY_OFF_SECONDS = 20;
-const COOLDOWN_SECONDS = 900;
-const DRY_RUN = false;
-const REBOOT_ON_PACKET_LOSS = false;
-const LOCK_FILE = '/var/run/modem-watchdog.lock';
-const STATE_FILE = '/var/db/modem-watchdog.last-reboot';
-```
-
-This confirms the watchdog is live and tied to IPv4 gateway health. See:
-[OPNsense + Shelly Modem Watchdog](opnsense-shelly-modem-watchdog.md).
+On 2026-11-23 the watchdog moved from a gateway-monitor syshook to a
+root cron task that runs `/usr/local/sbin/modem-watchdog --live` every minute.
+It requires three consecutive failed IPv4 WAN checks and can send up to two
+timed power-cycle requests per outage, at least 15 minutes apart. Its
+production state is `/var/db/modem-watchdog.json`. The original hooks are
+archived outside the syshook directory. See the
+[modem watchdog runbook](opnsense-shelly-modem-watchdog.md).
 
 ## Follow-Up Items
 

@@ -5,6 +5,7 @@ behavior that affects OPNsense routing.
 
 ## Documents
 
+- [Connect Box IPv4 outage and missed modem watchdog (2026-11-23)](connect-box-ipv4-outage-2026-11-23.md)
 - [WAN UDP DNS reply loop (2026-11-23)](wan-udp-dns-reply-loop-2026-11-23.md)
 - [Charles-PC SSH and ping timeout (2026-11-23)](charles-pc-ssh-ping-2026-11-23.md)
 - [Uncommon Domain DNS Sample (2026-10-24)](uncommon-dns-sample-2026-10-24.md)
