@@ -9,7 +9,9 @@ operations, and cable modem behavior.
 
 - [Uncommon Domain DNS Sample (2026-10-24)](network/uncommon-dns-sample-2026-10-24.md)
 - [riverlight.co.jp Intermittent DNS Failure (2026-10-24)](network/riverlight-dns-investigation-2026-10-24.md)
+- [WAN Bandwidth Snapshot (2026-10-01)](network/wan-bandwidth-snapshot-2026-10-01.md)
 - [OPNsense IPv6 over DS-Lite with Connect Box](network/ipv6-dslite-opnsense-connectbox.md)
+- [WAN_DHCP6 100% Loss Investigation (2026-09-18)](network/wan-dhcp6-outage-2026-09-18.md)
 - [Tailscale Subnet Router SSH Diagnostics](network/tailscale-subnet-router-ssh-diagnostics-2026-07-04.md)
 - [Wi-Fi AP and Mesh Topology](network/wifi-ap-mesh-topology.md)
 

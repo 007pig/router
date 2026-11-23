@@ -1,6 +1,7 @@
 # Wi-Fi AP And Mesh Topology
 
-Date observed/updated: 2026-07-01
+Date initially observed: 2026-07-01
+Last updated: 2026-10-10
 
 This document records the current OpenWrt AP layout and mesh relationships on
 the `192.168.1.0/24` LAN. It is based on read-only SSH inspection of the APs
@@ -58,6 +59,76 @@ ignored (`dhcp.lan.ignore=1`). The LAN DHCP authority for AP management
 addresses is OPNsense.
 
 ## Inventory
+
+### 2026-10-10: Charles AP uplink restored to gigabit
+
+After the user unplugged and reconnected the Ethernet cable, a read-only SSH
+check of `192.168.1.251` confirmed `/sys/class/net/lan/` reports:
+
+```text
+speed: 1000
+duplex: full
+carrier: 1
+operstate: up
+```
+
+The previously observed 100 Mbit/s uplink has recovered to 1000 Mbit/s
+full-duplex. This verifies link negotiation only; no throughput or loaded
+latency test was performed in this check. No configuration was changed.
+
+### 2026-10-01: ng-2ndfloor behind the MacBook bridge
+
+The user confirmed this updated wired topology:
+
+```text
+LAN switch -> MacBook en25 -> macOS bridge1 -> MacBook en8 -> ng-2ndfloor
+              1000baseT                       1000baseT     192.168.1.102
+```
+
+Local `ifconfig` confirmed both bridge members active at 1000baseT full-duplex.
+The bridge owns Mac address `192.168.1.115`, ULA reservation `::1e35`, and
+SLAAC address `fde1:c8ad:df47:4fa0:1c31:3655:9694:a5e2`. Bridge learning placed
+the OPNsense MAC on `en25` and ng-2ndfloor's LAN MAC on `en8`.
+The Mac and ng-2ndfloor therefore share the Mac's switch-facing path; elevated
+RTTs to both are not independent evidence of separate LAN faults.
+This supersedes any inference from the older notes that ng-2ndfloor is
+directly connected to the LAN switch. Charles-PC remains associated with
+the separate EAX12-charles AP, as verified below.
+
+### 2026-10-01: Charles AP uplink at 100 Mbit/s
+
+Read-only follow-up while investigating Steam-related household lag:
+
+- `EAX12-charles` (`192.168.1.251`) reports `lan` speed `100`, duplex `full`.
+- Charles-PC was associated with its `phy1-ap0` 5 GHz radio. Bridge learning
+  placed the PC on port 4 (`phy1-ap0`) and OPNsense on port 1 (`lan`), confirming
+  that the PC's internet path crosses this 100 Mbit/s uplink.
+- The PC's Wi-Fi signal was approximately -52 dBm and AP-to-PC PHY bitrate
+  1020.6 Mbit/s. That PHY rate does not remove the wired uplink bottleneck.
+- Over approximately ten seconds, AP `lan` RX grew by 123,318,684 bytes,
+  approximately 98.65 Mbit/s; TX grew by 2,190,891 bytes (1.75 Mbit/s).
+- OPNsense WAN and LAN both remained 1000baseT full-duplex;
+  `ng-2ndfloor` reported a 1000 Mbit/s LAN uplink.
+- During an earlier 20-second sample, router WAN traffic averaged 102.82
+  Mbit/s down and 2.47 Mbit/s up, CPU busy was 13.6%, and interface error/drop
+  counters did not increase. Router-to-Cloudflare IPv4/IPv6 probes each had
+  0/20 lost, average RTT around 26 ms, maxima 54/49 ms. Modem RTT averaged
+  2.14 ms. Charles-PC did not answer ICMP; that alone is not proof of loss.
+- A later ten-probe LAN comparison measured average RTT 269.6 ms to
+  EAX12-charles, 268.4 ms to ng-2ndfloor, and 261.5 ms to the Mac, with no lost
+  replies. These LAN-wide delays mean the Charles AP's saturated uplink is
+  a confirmed bottleneck, but is not by itself a proven explanation of all
+  household lag. Shared LAN queuing/switch behavior needs investigation.
+- After background LAN downloads subsided during the WAN-test follow-up,
+  ten-probe checks returned average RTT 0.51 ms to EAX12-charles, 0.24 ms
+  to the Mac, and 15.04 ms to Cloudflare IPv4, all without lost replies.
+  This supports a load-correlated LAN delay problem; it does not establish
+  whether the mechanism is Ethernet flow control, switch queuing, or another
+  shared-path effect.
+
+No link, AP, router, or shaper settings were changed. Router/AP clocks may
+differ; these measurements use the session date. See the
+[WAN bandwidth snapshot](wan-bandwidth-snapshot-2026-10-01.md) for flow details.
 
 | IP | Hostname | Model | Addressing | Mesh role |
 | --- | --- | --- | --- | --- |
