@@ -23,6 +23,21 @@ Then choose the relevant document:
 Do not assume the current network behavior from memory. Re-read the relevant
 document before making a recommendation or changing router/modem state.
 
+## Shared Agent Skills
+
+Agent Skills are shared between Claude Code and Codex.
+
+- `.agents/skills/<name>/` is the single source of truth (Codex reads it
+  directly). Each skill follows https://agentskills.io/specification.
+- `.claude/skills` is a single relative symlink to `../.agents/skills`, so
+  Claude Code sees exactly the same directory. Never keep a second copy of a
+  skill, and do not put files in `.claude/skills/`.
+- Add, edit, rename, and delete skills only under `.agents/skills/`; both tools
+  pick the change up automatically, with no sync step.
+- Keep `SKILL.md` free of tool-specific features (extra front matter keys,
+  tool names, subagents, hooks). Put Codex-only metadata in the skill's
+  `agents/openai.yaml`.
+
 ## Environment
 
 OPNsense router:

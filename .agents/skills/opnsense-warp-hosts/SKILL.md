@@ -1,6 +1,6 @@
 ---
 name: opnsense-warp-hosts
-description: Manage the OPNsense firewall alias named warp_hosts for LAN clients that should use Cloudflare WARP policy routing. Use when Codex needs to add, remove, list, verify, or document WARP host membership on the home OPNsense router, especially for macOS clients with IPv4 and ULA IPv6 addresses.
+description: Manage the OPNsense firewall alias named warp_hosts for LAN clients that should use Cloudflare WARP policy routing. Use when an agent needs to add, remove, list, verify, or document WARP host membership on the home OPNsense router, especially for macOS clients with IPv4 and ULA IPv6 addresses.
 ---
 
 # OPNsense WARP Hosts
